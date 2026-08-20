@@ -1,0 +1,102 @@
+{
+  "server_name": "Spider Server",
+
+  "tcp_port": 7891,
+  "dht_port": 7892,
+  "udp_port": 37777,
+  "interserver_port": 7893,
+  "direct_connect_port": 7894,
+  "bluetooth_port": 7895,
+  "wifi_direct_port": 7896,
+  "p2p_port": 7894,
+
+  "public_host": "",
+  "public_port": 7891,
+
+  "hidden_mode": false,
+  "dht_whitelist": [],
+
+  "rate_limit": {
+    "global_seconds_per_msg": 0.5,
+    "burst_capacity": 5
+  },
+
+  "file_transfer": {
+    "enabled": true,
+    "max_file_size_mb": 100,
+    "retention_days": 7
+  },
+
+  "user_management": {
+    "strict_uuid_mac": true,
+    "max_connections": 1000,
+    "min_client_version": "1.0.0"
+  },
+
+  "group_chat": {
+    "enabled": true,
+    "max_group_size": 50,
+    "allow_cross_server": true
+  },
+
+  "dht": {
+    "k_bucket_size": 20,
+    "alpha": 3
+  },
+
+  "logging": {
+    "level": "INFO",
+    "directory": ""
+  },
+
+  "security": {
+    "max_login_attempts": 5,
+    "lockout_seconds": 60,
+    "session_timeout_min": 60,
+    "replay_window_sec": 60
+  },
+
+  "keyring": {
+    "service_name": "spider-server",
+    "required": true,
+    "fallback_allowed": false
+  },
+
+  "transport": {
+    "enabled": true,
+    "key_rotation_sec": 3600,
+    "handshake_timeout": 10
+  },
+
+  "obfuscation": {
+    "enabled": true,
+    "mode": "http",
+    "available_modes": ["http", "dns", "tls", "websocket", "random"]
+  },
+
+  "onion": {
+    "enabled": false,
+    "layers": 3,
+    "min_layers": 1,
+    "max_layers": 5
+  },
+
+  "direct_connect": {
+    "enabled": true,
+    "max_peers": 50,
+    "bluetooth_enabled": true,
+    "wifi_direct_enabled": true,
+    "lan_discovery": true,
+    "public_ip": ""
+  },
+
+  "client_defaults": {
+    "sent_message_color": "#FF4444",
+    "recv_message_color": "#44FF44",
+    "send_button_color": "#FF4444",
+    "auto_download_files": true,
+    "obfuscation_mode": "http",
+    "onion_enabled": false,
+    "onion_layers": 3
+  }
+}
