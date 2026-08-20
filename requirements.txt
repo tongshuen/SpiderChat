@@ -1,0 +1,28 @@
+# Spider — 端到端加密聊天
+# 客户端和服务器端通用依赖
+
+# 核心加密库
+cryptography>=41.0.0
+
+# 密钥环（服务器端机密存储）
+keyring>=24.0.0
+
+# 可选：蓝牙支持（P2P 直连）
+# PyBluez 可能并非在所有平台上都可用
+PyBluez>=0.23; sys_platform != "win32"
+
+# 标准库替代（始终可用）：
+# - socket（TCP/UDP 网络）
+# - json（消息序列化）
+# - hashlib（SHA-256）
+# - base64（编码）
+# - threading（并发）
+# - tkinter（备用 GUI）
+# - uuid（UUIDv1 生成）
+# - os / sys / time / struct / random
+
+# 可选的 DHT 性能提升
+# cffi>=1.15.0
+
+# 开发 / 测试
+# pytest>=7.0.0
