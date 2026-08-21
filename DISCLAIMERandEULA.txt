@@ -1,6 +1,6 @@
 Spider 软件免责声明和最终用户许可协议（扩展版）（中文）
 
-最后更新日期： 二〇二六年八月二十一日
+最后更新日期： 二〇二六年八月二十二日
 
 感谢您选择 Spider（以下简称“本软件”、“本项目”或“我们”）。本软件是一款端到端加密的即时通信工具，旨在为合法用户提供安全的隐私通信渠道。在使用本软件前，请您务必仔细阅读并充分理解本免责声明的全部内容。若您不同意本声明的任何条款，请勿下载、安装或使用本软件。
 
@@ -127,8 +127,7 @@ Spider 软件免责声明和最终用户许可协议（扩展版）（中文）
 9.2 使用限制
 您不得：
 - 将本软件用于任何违法或侵犯他人权益的活动（详见本文件第二章）；
-- 对本软件进行反向工程、反编译或试图提取源代码（法律允许的除外）；
-- 出售、转租、转让或再分发本软件，除非获得许可方明确书面同意；
+- 未将移除了维持网络纯净性代码的版本（例如移除了MAC地址必须为真实MAC的版本）设计为不可加入未移除维持网络纯净性代码的网络（例如本仓库提供的版本）
 - 移除或篡改软件中的版权、商标或其他专有标识；
 - 以任何方式干扰本软件的正常运行或破坏其安全性。
 
@@ -163,7 +162,7 @@ Spider 软件免责声明和最终用户许可协议（扩展版）（中文）
 
 Spider Software Disclaimer and EULA (Extended Version) (English)
 
-Last Updated: August 21, 2026
+Last Updated: August 22, 2026
 
 Thank you for choosing Spider (hereinafter referred to as "this Software", "this Project", or "we"). This Software is an end-to-end encrypted instant messaging tool designed to provide secure private communication channels for legitimate users. Before using this Software, please carefully read and fully understand all contents of this Disclaimer. If you do not agree with any term of this Disclaimer, do not download, install, or use this Software.
 
@@ -283,8 +282,7 @@ The Licensor grants you a limited, non‑exclusive, non‑transferable, revocabl
 9.2 Usage Restrictions
 You shall not:
 - Use this Software for any illegal or rights‑infringing activities (see Chapter II of this document for details);
-- Reverse engineer, decompile, or attempt to extract the source code except as permitted by law;
-- Sell, sublicense, transfer, or redistribute this Software without the Licensor's explicit written consent;
+- Design a version from which the code maintaining network purity (e.g., the version that removes the requirement for a real MAC address) to be incapable of joining a network that has not removed such code (e.g., the version provided in this repository);
 - Remove or alter any copyright, trademark, or other proprietary notices within the Software;
 - Interfere with the normal operation of this Software or compromise its security in any way.
 
