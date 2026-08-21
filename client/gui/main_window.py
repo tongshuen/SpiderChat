@@ -91,6 +91,11 @@ class MainWindow:
         # 已读回执开关
         self.read_receipts_enabled = self.config.get("read_receipts_enabled", True)
 
+        # ---------- 新增：用于可视区域回执的数据 ----------
+        self._message_widgets = []          # 每个元素: {'widget': outer, 'msg_id': str, 'receipt_sent': bool}
+        self._visible_check_pending = False # 防抖标志
+        # ------------------------------------------------
+
         self._build_ui()
         self._connect_and_login()
 
@@ -139,6 +144,13 @@ class MainWindow:
 
         self.chat_scroll = ctk.CTkScrollableFrame(right)
         self.chat_scroll.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # 绑定滚动和大小变化事件，用于检测可见消息
+        canvas = self.chat_scroll._parent_canvas
+        canvas.bind("<Configure>", lambda e: self._on_scroll_or_resize())
+        canvas.bind("<MouseWheel>", lambda e: self._on_scroll_or_resize())
+        canvas.bind("<Button-4>", lambda e: self._on_scroll_or_resize())   # Linux 滚轮上
+        canvas.bind("<Button-5>", lambda e: self._on_scroll_or_resize())   # Linux 滚轮下
 
         # 输入区
         input_area = ctk.CTkFrame(right)
@@ -322,15 +334,18 @@ class MainWindow:
                                            m.get("timestamp", 0),
                                            delivery_status=m.get("delivery_status", "sending"),
                                            msg_id=m.get("msg_id", ""))
-        # 标记所有接收消息为已读
+        # 标记所有接收消息为已读（本地标记，但发送回执由滚动可见性触发）
         self.msg_store.mark_read(uuid_str)
-        # 发送已读回执给所有可见的接收消息
-        self._send_read_receipts_for_visible(uuid_str)
+        # 延迟检查可见消息，等待窗口渲染完成
+        self.root.after(200, self._check_visible_messages)
 
     def _clear_chat_display(self):
         for w in self.chat_scroll.winfo_children():
             w.destroy()
         self._receipt_widgets.clear()
+        # ---------- 清空消息控件列表 ----------
+        self._message_widgets.clear()
+        # ------------------------------------
 
     def _display_text_message(self, text: str, direction: str,
                                timestamp: int = 0,
@@ -391,6 +406,18 @@ class MainWindow:
                 )
                 time_label.pack(padx=8, pady=(0, 4))
 
+        # ---------- 如果是接收消息且有 msg_id，则加入可见性追踪 ----------
+        if direction == "recv" and msg_id:
+            # 检查是否已存在相同 msg_id 的条目（避免重复添加）
+            exist = any(item["msg_id"] == msg_id for item in self._message_widgets)
+            if not exist:
+                self._message_widgets.append({
+                    "widget": outer,
+                    "msg_id": msg_id,
+                    "receipt_sent": False
+                })
+        # ----------------------------------------------------------------
+
         self._scroll_chat_to_bottom()
         return outer
 
@@ -426,6 +453,17 @@ class MainWindow:
                     "label": receipt_label,
                     "status": delivery_status,
                 }
+        else:
+            # ---------- 接收的文件消息也加入可见性追踪 ----------
+            if msg_id:
+                exist = any(item["msg_id"] == msg_id for item in self._message_widgets)
+                if not exist:
+                    self._message_widgets.append({
+                        "widget": outer,
+                        "msg_id": msg_id,
+                        "receipt_sent": False
+                    })
+            # ------------------------------------------------
 
         self._scroll_chat_to_bottom()
 
@@ -605,21 +643,69 @@ class MainWindow:
         except Exception as e:
             self._show_error(f"文件下载失败: {e}")
 
-    # ===== 已读回执发送 =====
+    # ===== 已读回执发送（基于可视区域） =====
+
+    def _on_scroll_or_resize(self):
+        """滚动或窗口大小变化时触发，防抖后检查可见消息。"""
+        if not self._visible_check_pending:
+            self._visible_check_pending = True
+            self.root.after(150, self._check_visible_messages)
+
+    def _check_visible_messages(self):
+        """遍历所有接收消息控件，若完全可见且未发送回执则发送已读回执。"""
+        self._visible_check_pending = False
+        if not self.read_receipts_enabled:
+            return
+        if not self.current_contact:
+            return
+
+        try:
+            canvas = self.chat_scroll._parent_canvas
+            inner = self.chat_scroll._inner_frame
+
+            # 获取内部框架在画布上的 y 偏移（因滚动而变）
+            inner_y = inner.winfo_y()  # 可为负
+            canvas_height = canvas.winfo_height()
+            if canvas_height <= 0:
+                return
+
+            # 获取可视区域顶部和底部的画布坐标
+            # 由于 inner 的父是 canvas，inner_y 就是内框架相对于画布左上角的偏移
+            # 可视区域顶部为 0，底部为 canvas_height
+            top_visible = 0
+            bottom_visible = canvas_height
+
+            # 遍历当前所有消息控件
+            for item in self._message_widgets:
+                widget = item["widget"]
+                msg_id = item["msg_id"]
+                if item["receipt_sent"]:
+                    continue
+                # 获取控件的 y 坐标相对于 inner 的偏移
+                widget_y = widget.winfo_y()
+                widget_height = widget.winfo_height()
+                if widget_height <= 0:
+                    continue
+                # 控件在画布上的实际 y
+                canvas_y = inner_y + widget_y
+                # 判断是否完全可见
+                if canvas_y >= top_visible and canvas_y + widget_height <= bottom_visible:
+                    # 完全可见，发送已读回执
+                    self._send_read_receipt(self.current_contact, msg_id)
+                    item["receipt_sent"] = True
+        except Exception as e:
+            # 容错，避免影响界面
+            print(f"[VISIBLE] Check error: {e}")
+
+    # ===== 已读回执发送（旧方法，保留但不再自动调用） =====
 
     def _send_read_receipts_for_visible(self, contact_uuid: str):
         """
-        对当前聊天窗口中可见的、来自对方的消息发送已读回执。
-        仅在用户开启已读回执功能时执行。
+        旧方法：基于数据库发送最近消息的回执，现已改为基于可视区域。
+        保留此方法以防其他调用，但实际不再使用。
         """
-        if not self.read_receipts_enabled:
-            return
-        if not contact_uuid.startswith("group:"):
-            # 一对一聊天：获取该联系人的最近消息
-            msgs = self.msg_store.get_messages(contact_uuid, limit=50)
-            for m in msgs:
-                if m["direction"] == "recv" and m.get("msg_id"):
-                    self._send_read_receipt(contact_uuid, m["msg_id"])
+        # 不再执行任何操作，由 _check_visible_messages 替代
+        pass
 
     def _send_read_receipt(self, from_uuid: str, server_msg_id: str):
         """向服务器发送已读回执。"""
@@ -672,12 +758,16 @@ class MainWindow:
                         from_uuid, "recv", f"[文件] {fname}",
                         filename=fname, filesize=len(data), is_file=True,
                         delivery_status="delivered",
+                        server_msg_id=server_msg_id,
                     )
                     if self.current_contact == from_uuid:
                         self._display_file_message(
                             {"filename": fname, "filesize": len(data)},
                             "recv",
+                            msg_id=server_msg_id,  # 使用 server_msg_id
                         )
+                        # 显示后检查可见性
+                        self.root.after(100, self._check_visible_messages)
             else:
                 plaintext = decrypt_message(
                     encrypted,
@@ -689,12 +779,15 @@ class MainWindow:
                 self.msg_store.add_message(
                     from_uuid, "recv", plaintext,
                     timestamp=ts, delivery_status="delivered",
+                    server_msg_id=server_msg_id,
                 )
                 if self.current_contact == from_uuid:
-                    self._display_text_message(plaintext, "recv", ts)
-                    # 当前正在查看此联系人 → 发送已读回执
-                    if self.read_receipts_enabled and server_msg_id:
-                        self._send_read_receipt(from_uuid, server_msg_id)
+                    self._display_text_message(
+                        plaintext, "recv", ts,
+                        msg_id=server_msg_id  # 使用 server_msg_id
+                    )
+                    # 显示后检查可见性
+                    self.root.after(100, self._check_visible_messages)
 
         except Exception as e:
             self._show_error(f"消息解密失败: {e}")
