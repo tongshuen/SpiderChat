@@ -8,6 +8,7 @@ import os
 import time
 import json
 import base64
+import sqlite3  # 新增：用于直接操作数据库查询未读消息
 from collections import OrderedDict
 
 import customtkinter as ctk
@@ -92,8 +93,9 @@ class MainWindow:
         self.read_receipts_enabled = self.config.get("read_receipts_enabled", True)
 
         # ---------- 新增：用于可视区域回执的数据 ----------
-        self._message_widgets = []          # 每个元素: {'widget': outer, 'msg_id': str, 'receipt_sent': bool}
-        self._visible_check_pending = False # 防抖标志
+        # 每个元素: {'widget': outer, 'msg_id': str, 'receipt_sent': bool, 'top_seen': bool, 'bottom_seen': bool}
+        self._message_widgets = []
+        self._visible_check_pending = False  # 防抖标志
         # ------------------------------------------------
 
         self._build_ui()
@@ -189,9 +191,10 @@ class MainWindow:
         self._show_contact_menu(uuid_str, event.x_root, event.y_root)
 
     def _show_contact_menu(self, uuid_str: str, x=None, y=None):
+        """显示联系人右键菜单（已添加“全部标记为已读”选项）"""
         menu = ctk.CTkToplevel(self.root)
         menu.geometry("200x10")
-        menu.withdraw()  # 用 tk.Menu 代替
+        menu.withdraw()
         menu.destroy()
 
         menu = __import__("tkinter").Menu(self.root, tearoff=0)
@@ -209,6 +212,10 @@ class MainWindow:
         menu.add_command(label="📤 分享联系人", command=lambda: self._share_contact(uuid_str))
         menu.add_command(label="🔍 搜索聊天记录", command=lambda: self._search_chat_record(uuid_str))
         menu.add_command(label="🧹 删除聊天记录", command=lambda: self._delete_chat_record(uuid_str))
+        # ---------- 新增：全部标记为已读 ----------
+        menu.add_separator()
+        menu.add_command(label="✅ 全部标记为已读", command=lambda: self._mark_all_read(uuid_str))
+        # -----------------------------------------
 
         if x is not None and y is not None:
             menu.post(x, y)
@@ -408,13 +415,14 @@ class MainWindow:
 
         # ---------- 如果是接收消息且有 msg_id，则加入可见性追踪 ----------
         if direction == "recv" and msg_id:
-            # 检查是否已存在相同 msg_id 的条目（避免重复添加）
             exist = any(item["msg_id"] == msg_id for item in self._message_widgets)
             if not exist:
                 self._message_widgets.append({
                     "widget": outer,
                     "msg_id": msg_id,
-                    "receipt_sent": False
+                    "receipt_sent": False,
+                    "top_seen": False,
+                    "bottom_seen": False
                 })
         # ----------------------------------------------------------------
 
@@ -461,7 +469,9 @@ class MainWindow:
                     self._message_widgets.append({
                         "widget": outer,
                         "msg_id": msg_id,
-                        "receipt_sent": False
+                        "receipt_sent": False,
+                        "top_seen": False,
+                        "bottom_seen": False
                     })
             # ------------------------------------------------
 
@@ -643,7 +653,7 @@ class MainWindow:
         except Exception as e:
             self._show_error(f"文件下载失败: {e}")
 
-    # ===== 已读回执发送（基于可视区域） =====
+    # ===== 已读回执发送（基于可视区域 + 完整浏览） =====
 
     def _on_scroll_or_resize(self):
         """滚动或窗口大小变化时触发，防抖后检查可见消息。"""
@@ -652,7 +662,10 @@ class MainWindow:
             self.root.after(150, self._check_visible_messages)
 
     def _check_visible_messages(self):
-        """遍历所有接收消息控件，若完全可见且未发送回执则发送已读回执。"""
+        """
+        检查所有接收消息的顶部和底部是否都曾被用户看到。
+        一旦两者都为 True，则发送已读回执。
+        """
         self._visible_check_pending = False
         if not self.read_receipts_enabled:
             return
@@ -669,33 +682,80 @@ class MainWindow:
             if canvas_height <= 0:
                 return
 
-            # 获取可视区域顶部和底部的画布坐标
-            # 由于 inner 的父是 canvas，inner_y 就是内框架相对于画布左上角的偏移
             # 可视区域顶部为 0，底部为 canvas_height
             top_visible = 0
             bottom_visible = canvas_height
 
             # 遍历当前所有消息控件
             for item in self._message_widgets:
-                widget = item["widget"]
-                msg_id = item["msg_id"]
                 if item["receipt_sent"]:
                     continue
-                # 获取控件的 y 坐标相对于 inner 的偏移
+                widget = item["widget"]
                 widget_y = widget.winfo_y()
                 widget_height = widget.winfo_height()
                 if widget_height <= 0:
                     continue
-                # 控件在画布上的实际 y
+                # 消息在画布上的实际 y
                 canvas_y = inner_y + widget_y
-                # 判断是否完全可见
-                if canvas_y >= top_visible and canvas_y + widget_height <= bottom_visible:
-                    # 完全可见，发送已读回执
-                    self._send_read_receipt(self.current_contact, msg_id)
+                # 检查顶部是否可见
+                if canvas_y >= top_visible and canvas_y <= bottom_visible:
+                    item["top_seen"] = True
+                # 检查底部是否可见
+                bottom_y = canvas_y + widget_height
+                if bottom_y >= top_visible and bottom_y <= bottom_visible:
+                    item["bottom_seen"] = True
+                # 如果顶部和底部都曾被看到，且未发送回执，则发送
+                if item["top_seen"] and item["bottom_seen"] and not item["receipt_sent"]:
+                    self._send_read_receipt(self.current_contact, item["msg_id"])
                     item["receipt_sent"] = True
         except Exception as e:
-            # 容错，避免影响界面
             print(f"[VISIBLE] Check error: {e}")
+
+    # ===== 全部标记为已读（新增功能） =====
+
+    def _mark_all_read(self, contact_uuid: str):
+        """
+        将该联系人的所有未读消息标记为已读，并发送已读回执。
+        包括当前屏幕上未显示的离线消息。
+        """
+        if not self.read_receipts_enabled:
+            self._show_info("已读回执功能已关闭，无法标记")
+            return
+
+        # 从数据库获取该联系人的所有未读接收消息的 server_msg_id
+        db_path = self.msg_store.db_path
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        c.execute(
+            "SELECT server_msg_id FROM messages WHERE contact_uuid=? AND direction='recv' "
+            "AND server_msg_id IS NOT NULL AND delivery_status != 'read'",
+            (contact_uuid,)
+        )
+        rows = c.fetchall()
+        conn.close()
+
+        if not rows:
+            self._show_info("该联系人没有未读消息")
+            return
+
+        server_ids = [row[0] for row in rows]
+        count = len(server_ids)
+
+        # 逐个发送已读回执
+        for sid in server_ids:
+            self._send_read_receipt(contact_uuid, sid)
+            # 更新数据库状态为已读
+            self.msg_store.update_delivery_status_by_server_id(sid, "read")
+
+        # 更新UI中当前显示的对应消息状态
+        for item in self._message_widgets:
+            if item["msg_id"] in server_ids:
+                item["receipt_sent"] = True
+                item["top_seen"] = True
+                item["bottom_seen"] = True
+                self._update_receipt_display(item["msg_id"], "read")
+
+        self._show_info(f"已标记 {count} 条消息为已读")
 
     # ===== 已读回执发送（旧方法，保留但不再自动调用） =====
 
@@ -704,7 +764,7 @@ class MainWindow:
         旧方法：基于数据库发送最近消息的回执，现已改为基于可视区域。
         保留此方法以防其他调用，但实际不再使用。
         """
-        # 不再执行任何操作，由 _check_visible_messages 替代
+        # 不再执行任何操作，由 _check_visible_messages 和 _mark_all_read 替代
         pass
 
     def _send_read_receipt(self, from_uuid: str, server_msg_id: str):
