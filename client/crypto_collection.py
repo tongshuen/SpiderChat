@@ -3,7 +3,7 @@ Spider — Collection 消息辅助模块
 处理加密货币地址卡片消息的解析、构建与渲染。
 消息格式（明文）:  Collection:货币名称:地址:网络
 示例:              Collection:BTC:bc1qtnpzgam83dzlyqnmnfvqec96uzm409kzs4rl8s:Bitcoin
-                    Collection:USDC:GNZknFF64eMnAUhDzVJHo4LnT2f68j5pPsEVQYqE5Np3:Solana
+                    Collection:USDC:GNZknFF64eMnAUhDzVJHo4LnT2f68j5pPsEVQYqE5Np3:Solana（这两个地址和网络是我的哦，你们如果闲的发慌可以给我转钱）
 服务端只将其视为普通文本消息；客户端负责识别并渲染为卡片。
 """
 
@@ -12,12 +12,13 @@ import json
 import re
 import hashlib
 
-from client.utils.config import get_data_dir
+# 不再需要 client.utils.config 中的 get_data_dir
+# from client.utils.config import get_data_dir
 
 # 硬编码标识前缀
 COLLECTION_TAG = "Collection"
 
-# 加密货币数据 JSON 文件名（放在 Spider data 目录下）
+# 加密货币数据 JSON 文件名（放在 client/ 目录下）
 CRYPTO_DATA_FILE = "crypto_data.json"
 
 # 卡片 UI 配色
@@ -66,8 +67,12 @@ def build_collection_text(currency: str, address: str, network: str) -> str:
 
 
 def crypto_data_path() -> str:
-    """返回 crypto_data.json 的绝对路径（data 目录下）。"""
-    return os.path.join(get_data_dir(), CRYPTO_DATA_FILE)
+    """
+    返回 crypto_data.json 的绝对路径。
+    修改后：直接从 client/ 目录读取，随仓库发布。
+    """
+    # 当前文件在 client/crypto_collection.py，取其所在目录（即 client/）
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), CRYPTO_DATA_FILE)
 
 
 def load_crypto_data() -> dict:
