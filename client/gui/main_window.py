@@ -1,5 +1,5 @@
 """
-主窗口 — CTk 优先，回退到 tkinter。
+Spider 客户端 — 主窗口 (MainWindow)
 处理消息显示（含送达/已读回执）、发送、群组、设置。
 """
 
@@ -8,7 +8,8 @@ import os
 import time
 import json
 import base64
-import sqlite3  # 新增：用于直接操作数据库查询未读消息
+import sqlite3
+import threading
 from collections import OrderedDict
 
 import customtkinter as ctk
@@ -32,6 +33,13 @@ from shared.crypto_utils import sign_data, verify_signature, load_ed25519_privat
 from shared.protocol import *
 from tkinter import messagebox, filedialog, simpledialog
 
+# ===== Collection 卡片支持 =====
+from client.crypto_collection import (
+    is_collection_text, parse_collection, build_collection_text,
+    load_crypto_data, match_prefix, short_address,
+    CARD_BG_SENT, CARD_BG_RECV, CARD_ACCENT, CARD_TEXT, CARD_SUB,
+)
+
 
 # ===== 回执状态中文映射 =====
 RECEIPT_TEXT = {
@@ -52,7 +60,6 @@ class MainWindow:
         self.uuid = identity["uuid"]
         self.config = load_config()
         self.msg_store = MessageStore()
-
         self.tcp = TCPClient(server_host, server_port)
         # 回调绑定
         self.tcp.on_message = self._on_message
@@ -78,31 +85,24 @@ class MainWindow:
 
         self.cross_server = CrossServerClient(self.tcp, identity)
         self.discovery = UDPDiscovery(self.config.get("udp_port", DEFAULT_UDP_PORT))
-
         self.contacts = self._load_contacts_list()
         self.current_contact = None
         self.contact_pubkeys = {}
         self.admin_token = None
         self.is_admin = False
-
         self.pending_files = {}
         # msg_id → UI 控件引用（用于更新回执状态）
         self._receipt_widgets: dict[str, dict] = {}
-
         # 已读回执开关
         self.read_receipts_enabled = self.config.get("read_receipts_enabled", True)
-
-        # ---------- 新增：用于可视区域回执的数据 ----------
-        # 每个元素: {'widget': outer, 'msg_id': str, 'receipt_sent': bool, 'top_seen': bool, 'bottom_seen': bool}
+        # 可视区域回执数据
         self._message_widgets = []
-        self._visible_check_pending = False  # 防抖标志
-        # ------------------------------------------------
+        self._visible_check_pending = False
 
         self._build_ui()
         self._connect_and_login()
 
     # ===== UI 构建 =====
-
     def _build_ui(self):
         self.root = ctk.CTk()
         self.root.title("Spider🕷")
@@ -115,24 +115,20 @@ class MainWindow:
         # 顶部搜索栏
         top = ctk.CTkFrame(self.root)
         top.pack(side="top", fill="x", padx=5, pady=5)
-
         self.search_var = ctk.StringVar()
         search_entry = ctk.CTkEntry(top, textvariable=self.search_var, placeholder_text="🔍 搜索联系人...")
         search_entry.pack(side="left", fill="x", expand=True, padx=5)
         search_entry.bind("<KeyRelease>", self._on_search_key)
-
         settings_btn = ctk.CTkButton(top, text="⚙ 设置", width=70, command=self._open_settings)
         settings_btn.pack(side="right", padx=5)
 
         # 主区域
         main = ctk.CTkFrame(self.root)
         main.pack(side="top", fill="both", expand=True, padx=5, pady=5)
-
         # 左侧联系人列表
         left = ctk.CTkFrame(main, width=250)
         left.pack(side="left", fill="y", padx=(0, 5))
         left.pack_propagate(False)
-
         self.contact_frame = ctk.CTkScrollableFrame(left)
         self.contact_frame.pack(fill="both", expand=True)
         self._refresh_contact_list_ctk()
@@ -140,41 +136,42 @@ class MainWindow:
         # 右侧聊天区
         right = ctk.CTkFrame(main)
         right.pack(side="right", fill="both", expand=True)
-
         self.chat_header = ctk.CTkLabel(right, text="选择一个联系人开始聊天", font=("Arial", 14))
         self.chat_header.pack(side="top", fill="x", pady=5)
-
         self.chat_scroll = ctk.CTkScrollableFrame(right)
         self.chat_scroll.pack(fill="both", expand=True, padx=5, pady=5)
-
-        # 绑定滚动和大小变化事件，用于检测可见消息
         canvas = self.chat_scroll._parent_canvas
         canvas.bind("<Configure>", lambda e: self._on_scroll_or_resize())
         canvas.bind("<MouseWheel>", lambda e: self._on_scroll_or_resize())
-        canvas.bind("<Button-4>", lambda e: self._on_scroll_or_resize())   # Linux 滚轮上
-        canvas.bind("<Button-5>", lambda e: self._on_scroll_or_resize())   # Linux 滚轮下
+        canvas.bind("<Button-4>", lambda e: self._on_scroll_or_resize())
+        canvas.bind("<Button-5>", lambda e: self._on_scroll_or_resize())
 
         # 输入区
         input_area = ctk.CTkFrame(right)
         input_area.pack(side="bottom", fill="x", padx=5, pady=5)
-
         self.msg_var = ctk.StringVar()
         msg_entry = ctk.CTkEntry(input_area, textvariable=self.msg_var, placeholder_text="输入消息...")
         msg_entry.pack(side="left", fill="x", expand=True, padx=5)
         msg_entry.bind("<Return>", lambda e: self._send_text())
 
+        # 📁 文件按钮
         file_btn = ctk.CTkButton(input_area, text="📁", width=40,
-                                  fg_color=self.config.get("send_button_color", DEFAULT_BUTTON_COLOR),
-                                  command=self._choose_file)
-        file_btn.pack(side="left", padx=5)
+                                 fg_color=self.config.get("send_button_color", DEFAULT_BUTTON_COLOR),
+                                 command=self._choose_file)
+        file_btn.pack(side="left", padx=2)
+
+        # 💸 Collection（加密货币卡片）按钮 —— 新增
+        collection_btn = ctk.CTkButton(input_area, text="💸", width=40,
+                                       fg_color=self.config.get("send_button_color", DEFAULT_BUTTON_COLOR),
+                                       command=self._open_collection_dialog)
+        collection_btn.pack(side="left", padx=(0, 5))
 
         send_btn = ctk.CTkButton(input_area, text="发送", width=70,
-                                  fg_color=self.config.get("send_button_color", DEFAULT_BUTTON_COLOR),
-                                  command=self._send_text)
+                                 fg_color=self.config.get("send_button_color", DEFAULT_BUTTON_COLOR),
+                                 command=self._send_text)
         send_btn.pack(side="right", padx=5)
 
     # ===== 联系人列表 =====
-
     def _refresh_contact_list_ctk(self):
         for w in self.contact_frame.winfo_children():
             w.destroy()
@@ -191,16 +188,13 @@ class MainWindow:
         self._show_contact_menu(uuid_str, event.x_root, event.y_root)
 
     def _show_contact_menu(self, uuid_str: str, x=None, y=None):
-        """显示联系人右键菜单（已添加“全部标记为已读”选项）"""
         menu = ctk.CTkToplevel(self.root)
         menu.geometry("200x10")
         menu.withdraw()
         menu.destroy()
-
         menu = __import__("tkinter").Menu(self.root, tearoff=0)
         contact = self._get_contact(uuid_str)
         name = contact.get("name", uuid_str[:8]) if contact else uuid_str[:8]
-
         menu.add_command(label=f"📝 编辑备注名 ({name})", command=lambda: self._edit_contact_name(uuid_str))
         menu.add_separator()
         is_blocked = contact.get("blocked", False) if contact else False
@@ -212,11 +206,8 @@ class MainWindow:
         menu.add_command(label="📤 分享联系人", command=lambda: self._share_contact(uuid_str))
         menu.add_command(label="🔍 搜索聊天记录", command=lambda: self._search_chat_record(uuid_str))
         menu.add_command(label="🧹 删除聊天记录", command=lambda: self._delete_chat_record(uuid_str))
-        # ---------- 新增：全部标记为已读 ----------
         menu.add_separator()
         menu.add_command(label="✅ 全部标记为已读", command=lambda: self._mark_all_read(uuid_str))
-        # -----------------------------------------
-
         if x is not None and y is not None:
             menu.post(x, y)
         else:
@@ -272,7 +263,6 @@ class MainWindow:
             self._clear_chat_display()
 
     # ===== 搜索 / 选择联系人 =====
-
     def _on_search_key(self, event):
         query = self.search_var.get().strip()
         if not query:
@@ -322,110 +312,175 @@ class MainWindow:
         contact = self._get_contact(uuid_str)
         name = contact.get("name", uuid_str[:8]) if contact else uuid_str[:8]
         self.chat_header.configure(text=f"💬 {name}")
-
         if uuid_str not in self.contact_pubkeys:
             self._fetch_peer_pubkey(uuid_str)
-
         self._load_chat_history(uuid_str)
 
     # ===== 聊天历史 & 显示 =====
-
     def _load_chat_history(self, uuid_str: str):
         self._clear_chat_display()
         msgs = self.msg_store.get_messages(uuid_str, limit=200)
         for m in msgs:
             if m["is_file"]:
                 self._display_file_message(m, m["direction"], msg_id=m.get("msg_id", ""))
+            elif is_collection_text(m["text"]):
+                # 历史中的 Collection 消息渲染为卡片
+                self._display_collection_card(m["text"], m["direction"],
+                                              m.get("timestamp", 0),
+                                              delivery_status=m.get("delivery_status", "sending"),
+                                              msg_id=m.get("msg_id", ""))
             else:
                 self._display_text_message(m["text"], m["direction"],
                                            m.get("timestamp", 0),
                                            delivery_status=m.get("delivery_status", "sending"),
                                            msg_id=m.get("msg_id", ""))
-        # 标记所有接收消息为已读（本地标记，但发送回执由滚动可见性触发）
         self.msg_store.mark_read(uuid_str)
-        # 延迟检查可见消息，等待窗口渲染完成
         self.root.after(200, self._check_visible_messages)
 
     def _clear_chat_display(self):
         for w in self.chat_scroll.winfo_children():
             w.destroy()
         self._receipt_widgets.clear()
-        # ---------- 清空消息控件列表 ----------
         self._message_widgets.clear()
-        # ------------------------------------
 
-    def _display_text_message(self, text: str, direction: str,
-                               timestamp: int = 0,
-                               delivery_status: str = "sending",
-                               msg_id: str = ""):
-        """显示文本消息，附带回执状态小字。"""
-        color = (self.config.get("sent_message_color", DEFAULT_SENT_COLOR)
-                 if direction == "sent"
-                 else self.config.get("recv_message_color", DEFAULT_RECV_COLOR))
+    # ---------- Collection 卡片渲染 ----------
+    def _display_collection_card(self, text: str, direction: str,
+                                 timestamp: int = 0,
+                                 delivery_status: str = "sending",
+                                 msg_id: str = ""):
+        """将 Collection 文本渲染为加密货币地址卡片。"""
+        parsed = parse_collection(text)
+        if not parsed:
+            # 解析失败退化成普通文本
+            self._display_text_message(text, direction, timestamp, delivery_status, msg_id)
+            return
+
+        color = CARD_BG_SENT if direction == "sent" else CARD_BG_RECV
         side = "right" if direction == "sent" else "left"
 
-        # 外层容器
         outer = ctk.CTkFrame(self.chat_scroll, fg_color="transparent")
         outer.pack(anchor=side, padx=10, pady=2, fill="x")
 
-        # 消息气泡
-        bubble = ctk.CTkFrame(outer, fg_color=color)
-        bubble.pack(side=side, padx=0, pady=0)
+        card = ctk.CTkFrame(outer, fg_color=color, corner_radius=10)
+        card.pack(side=side, padx=0, pady=0, fill="x", expand=False)
 
-        label = ctk.CTkLabel(bubble, text=text, wraplength=400, text_color="white")
-        label.pack(padx=8, pady=(4, 0))
+        # 顶部：货币名称（大字）+ 网络标签
+        header = ctk.CTkFrame(card, fg_color="transparent")
+        header.pack(fill="x", padx=12, pady=(10, 2))
+        ctk.CTkLabel(header, text=f"💰 {parsed['currency']}",
+                     font=("Arial", 16, "bold"), text_color=CARD_ACCENT).pack(side="left")
+        ctk.CTkLabel(header, text=f"  {parsed['network']}",
+                     font=("Arial", 10), text_color=CARD_SUB).pack(side="left", padx=(4, 0))
 
-        # 时间戳 + 回执状态
+        # 地址行 + 复制按钮
+        addr_row = ctk.CTkFrame(card, fg_color="transparent")
+        addr_row.pack(fill="x", padx=12, pady=(2, 2))
+        addr_display = short_address(parsed["address"], 10, 8)
+        ctk.CTkLabel(addr_row, text=f"📍 {addr_display}",
+                     font=("Arial", 10), text_color=CARD_TEXT).pack(side="left")
+
+        copy_addr_btn = ctk.CTkButton(
+            addr_row, text="📋", width=32, height=24,
+            font=("Arial", 10),
+            command=lambda a=parsed["address"]: self._copy_to_clipboard(a, "地址已复制"))
+        copy_addr_btn.pack(side="left", padx=(8, 4))
+
+        copy_net_btn = ctk.CTkButton(
+            addr_row, text="📋网络", width=52, height=24,
+            font=("Arial", 9),
+            command=lambda n=parsed["network"]: self._copy_to_clipboard(n, "网络已复制"))
+        copy_net_btn.pack(side="left", padx=2)
+
+        # 完整地址提示（鼠标悬停可见）
+        ctk.CTkLabel(card, text=f"网络: {parsed['network']}",
+                     font=("Arial", 8), text_color="#777777").pack(anchor="w", padx=12, pady=(0, 2))
+
+        # 发送方的回执状态
         if direction == "sent":
-            status_text = RECEIPT_TEXT.get(delivery_status, "发送中")
-            if delivery_status == "read":
-                status_text = "✓✓ 已读"
-            elif delivery_status == "delivered":
-                status_text = "✓ 已送达"
-            elif delivery_status == "sending":
-                status_text = "⏳ 发送中"
-            elif delivery_status == "queued_offline":
-                status_text = "✓ 已送达（离线）"
-            elif delivery_status == "delivered_cross_server":
-                status_text = "✓ 已送达（跨服）"
-            else:
-                status_text = f"⏳ {status_text}"
-
-            receipt_label = ctk.CTkLabel(
-                bubble, text=status_text,
-                font=("Arial", 9), text_color="#CCCCCC"
-            )
-            receipt_label.pack(padx=8, pady=(0, 4))
-
-            # 保存引用，后续更新
+            status_text = self._receipt_status_text(delivery_status)
+            receipt_label = ctk.CTkLabel(card, text=status_text,
+                                         font=("Arial", 9), text_color="#CCCCCC")
+            receipt_label.pack(anchor="e", padx=12, pady=(0, 6))
             if msg_id:
-                self._receipt_widgets[msg_id] = {
-                    "label": receipt_label,
-                    "status": delivery_status,
-                }
+                self._receipt_widgets[msg_id] = {"label": receipt_label, "status": delivery_status}
         else:
-            # 接收的消息显示时间
             time_str = time.strftime("%H:%M", time.localtime(timestamp)) if timestamp else ""
             if time_str:
-                time_label = ctk.CTkLabel(
-                    bubble, text=time_str,
-                    font=("Arial", 9), text_color="#CCCCCC"
-                )
-                time_label.pack(padx=8, pady=(0, 4))
+                ctk.CTkLabel(card, text=time_str, font=("Arial", 9), text_color="#CCCCCC").pack(anchor="e", padx=12, pady=(0, 6))
 
-        # ---------- 如果是接收消息且有 msg_id，则加入可见性追踪 ----------
+        # 接收消息加入可见性追踪
         if direction == "recv" and msg_id:
             exist = any(item["msg_id"] == msg_id for item in self._message_widgets)
             if not exist:
                 self._message_widgets.append({
-                    "widget": outer,
-                    "msg_id": msg_id,
-                    "receipt_sent": False,
-                    "top_seen": False,
-                    "bottom_seen": False
+                    "widget": outer, "msg_id": msg_id,
+                    "receipt_sent": False, "top_seen": False, "bottom_seen": False
                 })
-        # ----------------------------------------------------------------
 
+        self._scroll_chat_to_bottom()
+        return outer
+
+    def _receipt_status_text(self, delivery_status: str) -> str:
+        if delivery_status == "read":
+            return "✓✓ 已读"
+        elif delivery_status == "delivered":
+            return "✓ 已送达"
+        elif delivery_status == "queued_offline":
+            return "✓ 已送达（离线）"
+        elif delivery_status == "delivered_cross_server":
+            return "✓ 已送达（跨服）"
+        elif delivery_status == "failed":
+            return "❌ 发送失败"
+        return "⏳ 发送中"
+
+    def _copy_to_clipboard(self, text: str, notice: str = "已复制"):
+        """跨平台复制到剪贴板（优先 tkinter，回退到 xclip/pbcopy）。"""
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.root.update()
+            self._show_info(f"{notice}: {short_address(text, 8, 6) if len(text) > 24 else text}")
+        except Exception:
+            try:
+                import subprocess
+                p = subprocess.Popen(["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE)
+                p.communicate(text.encode("utf-8"))
+                self._show_info(notice)
+            except Exception as e2:
+                self._show_error(f"复制失败: {e2}")
+
+    # ---------- 文本 / 文件 消息渲染（原有） ----------
+    def _display_text_message(self, text: str, direction: str,
+                              timestamp: int = 0,
+                              delivery_status: str = "sending",
+                              msg_id: str = ""):
+        color = (self.config.get("sent_message_color", DEFAULT_SENT_COLOR)
+                 if direction == "sent"
+                 else self.config.get("recv_message_color", DEFAULT_RECV_COLOR))
+        side = "right" if direction == "sent" else "left"
+        outer = ctk.CTkFrame(self.chat_scroll, fg_color="transparent")
+        outer.pack(anchor=side, padx=10, pady=2, fill="x")
+        bubble = ctk.CTkFrame(outer, fg_color=color)
+        bubble.pack(side=side, padx=0, pady=0)
+        label = ctk.CTkLabel(bubble, text=text, wraplength=400, text_color="white")
+        label.pack(padx=8, pady=(4, 0))
+        if direction == "sent":
+            receipt_label = ctk.CTkLabel(bubble, text=self._receipt_status_text(delivery_status),
+                                         font=("Arial", 9), text_color="#CCCCCC")
+            receipt_label.pack(padx=8, pady=(0, 4))
+            if msg_id:
+                self._receipt_widgets[msg_id] = {"label": receipt_label, "status": delivery_status}
+        else:
+            time_str = time.strftime("%H:%M", time.localtime(timestamp)) if timestamp else ""
+            if time_str:
+                ctk.CTkLabel(bubble, text=time_str, font=("Arial", 9), text_color="#CCCCCC").pack(padx=8, pady=(0, 4))
+        if direction == "recv" and msg_id:
+            exist = any(item["msg_id"] == msg_id for item in self._message_widgets)
+            if not exist:
+                self._message_widgets.append({
+                    "widget": outer, "msg_id": msg_id,
+                    "receipt_sent": False, "top_seen": False, "bottom_seen": False
+                })
         self._scroll_chat_to_bottom()
         return outer
 
@@ -436,45 +491,28 @@ class MainWindow:
         side = "right" if direction == "sent" else "left"
         fname = msg.get("filename", "unknown")
         fsize = msg.get("filesize", 0)
-
         outer = ctk.CTkFrame(self.chat_scroll, fg_color="transparent")
         outer.pack(anchor=side, padx=10, pady=2, fill="x")
-
         bubble = ctk.CTkFrame(outer, fg_color=color)
         bubble.pack(side=side)
-
         label = ctk.CTkLabel(bubble, text=f"📎 {fname} ({fsize} bytes)", text_color="white")
         label.pack(padx=8, pady=4)
         btn = ctk.CTkButton(bubble, text="下载", width=60, command=lambda: self._download_file(msg))
         btn.pack(padx=4, pady=2)
-
         if direction == "sent":
-            delivery_status = msg.get("delivery_status", "sending")
-            status_text = RECEIPT_TEXT.get(delivery_status, "发送中")
-            receipt_label = ctk.CTkLabel(
-                bubble, text=status_text,
-                font=("Arial", 9), text_color="#CCCCCC"
-            )
+            receipt_label = ctk.CTkLabel(bubble, text=self._receipt_status_text("sending"),
+                                         font=("Arial", 9), text_color="#CCCCCC")
             receipt_label.pack(padx=8, pady=(0, 4))
             if msg_id:
-                self._receipt_widgets[msg_id] = {
-                    "label": receipt_label,
-                    "status": delivery_status,
-                }
+                self._receipt_widgets[msg_id] = {"label": receipt_label, "status": "sending"}
         else:
-            # ---------- 接收的文件消息也加入可见性追踪 ----------
             if msg_id:
                 exist = any(item["msg_id"] == msg_id for item in self._message_widgets)
                 if not exist:
                     self._message_widgets.append({
-                        "widget": outer,
-                        "msg_id": msg_id,
-                        "receipt_sent": False,
-                        "top_seen": False,
-                        "bottom_seen": False
+                        "widget": outer, "msg_id": msg_id,
+                        "receipt_sent": False, "top_seen": False, "bottom_seen": False
                     })
-            # ------------------------------------------------
-
         self._scroll_chat_to_bottom()
 
     def _scroll_chat_to_bottom(self):
@@ -484,7 +522,6 @@ class MainWindow:
             pass
 
     def _update_receipt_display(self, msg_id: str, new_status: str):
-        """更新指定消息的回执显示。"""
         info = self._receipt_widgets.get(msg_id)
         if not info:
             return
@@ -513,56 +550,47 @@ class MainWindow:
             self._display_text_message(text, r["direction"])
 
     # ===== 发送消息 =====
-
     def _send_text(self):
         text = self.msg_var.get().strip()
         if not text or not self.current_contact:
             return
-
         peer_uuid = self.current_contact
         if peer_uuid not in self.contact_pubkeys:
             self._show_error("对方公钥尚未获取，请稍候")
             return
-
         try:
-            # 生成客户端消息 ID
             client_msg_id = generate_msg_id()
-
             encrypted = encrypt_message(
                 text, self.identity["x25519_private"],
                 self.contact_pubkeys[peer_uuid]["x25519"],
                 self.identity["ed25519_private"], self.uuid, peer_uuid
             )
             env = {
-                "type": SEND_MSG,
-                "to_uuid": peer_uuid,
-                "encrypted_payload": encrypted,
-                "client_msg_id": client_msg_id,
+                "type": SEND_MSG, "to_uuid": peer_uuid,
+                "encrypted_payload": encrypted, "client_msg_id": client_msg_id,
             }
             sig_data = json.dumps(env, sort_keys=True).encode()
             e_priv = load_ed25519_private(self.identity["ed25519_private"])
             signature = sign_data(e_priv, sig_data)
 
-            # 存入数据库（状态：sending）
-            db_id = self.msg_store.add_message(
+            self.msg_store.add_message(
                 peer_uuid, "sent", text,
                 timestamp=encrypted["timestamp"],
-                delivery_status="sending",
-                msg_id=client_msg_id,
+                delivery_status="sending", msg_id=client_msg_id,
             )
-
-            # 显示消息（带「发送中」状态）
-            self._display_text_message(
-                text, "sent",
-                timestamp=encrypted["timestamp"],
-                delivery_status="sending",
-                msg_id=client_msg_id,
-            )
-
-            # 发送到服务器
+            # Collection 消息用卡片渲染，其余用文本气泡
+            if is_collection_text(text):
+                self._display_collection_card(text, "sent",
+                                             timestamp=encrypted["timestamp"],
+                                             delivery_status="sending",
+                                             msg_id=client_msg_id)
+            else:
+                self._display_text_message(text, "sent",
+                                           timestamp=encrypted["timestamp"],
+                                           delivery_status="sending",
+                                           msg_id=client_msg_id)
             self.tcp.send_message(peer_uuid, encrypted, signature, client_msg_id=client_msg_id)
             self.msg_var.set("")
-
         except Exception as e:
             self._show_error(f"发送失败: {e}")
 
@@ -581,46 +609,31 @@ class MainWindow:
             fname = os.path.basename(filepath)
             peer_uuid = self.current_contact
             client_msg_id = generate_msg_id()
-
             nonce_b64, ct_b64 = encrypt_file_data(
                 data, self.identity["x25519_private"],
                 self.contact_pubkeys[peer_uuid]["x25519"]
             )
-
             file_payload = {
-                "type": "file",
-                "filename": fname,
-                "size": len(data),
-                "nonce": nonce_b64,
-                "ciphertext": ct_b64,
+                "type": "file", "filename": fname, "size": len(data),
+                "nonce": nonce_b64, "ciphertext": ct_b64,
                 "timestamp": int(time.time()),
             }
-
             env = {
-                "type": SEND_MSG,
-                "to_uuid": peer_uuid,
-                "encrypted_payload": file_payload,
-                "client_msg_id": client_msg_id,
+                "type": SEND_MSG, "to_uuid": peer_uuid,
+                "encrypted_payload": file_payload, "client_msg_id": client_msg_id,
             }
             sig_data = json.dumps(env, sort_keys=True).encode()
             e_priv = load_ed25519_private(self.identity["ed25519_private"])
             signature = sign_data(e_priv, sig_data)
-
             self.msg_store.add_message(
                 peer_uuid, "sent", f"[文件] {fname}",
                 filename=fname, filesize=len(data), is_file=True,
                 delivery_status="sending", msg_id=client_msg_id,
             )
-            self._display_file_message(
-                {"filename": fname, "filesize": len(data)},
-                "sent", msg_id=client_msg_id,
-            )
-
+            self._display_file_message({"filename": fname, "filesize": len(data)}, "sent", msg_id=client_msg_id)
             self.tcp.send({
-                "type": SEND_MSG,
-                "to_uuid": peer_uuid,
-                "encrypted_payload": file_payload,
-                "signature": signature,
+                "type": SEND_MSG, "to_uuid": peer_uuid,
+                "encrypted_payload": file_payload, "signature": signature,
                 "client_msg_id": client_msg_id,
             })
         except Exception as e:
@@ -643,9 +656,7 @@ class MainWindow:
                 self.contact_pubkeys[peer_uuid]["x25519"]
             )
             save_path = filedialog.asksaveasfilename(
-                initialfile=msg.get("filename", "download"),
-                parent=self.root
-            )
+                initialfile=msg.get("filename", "download"), parent=self.root)
             if save_path:
                 with open(save_path, "wb") as f:
                     f.write(data)
@@ -653,40 +664,124 @@ class MainWindow:
         except Exception as e:
             self._show_error(f"文件下载失败: {e}")
 
-    # ===== 已读回执发送（基于可视区域 + 完整浏览） =====
+    # ===== Collection 按钮 → 构建对话框（含 Tab 补全）=====
+    def _open_collection_dialog(self):
+        """弹出 Collection 构建对话框：货币 / 地址 / 网络，支持 Tab 补全。"""
+        if not self.current_contact:
+            self._show_error("请先选择一个联系人")
+            return
+        win = ctk.CTkToplevel(self.root)
+        win.title("💸 发送加密货币地址")
+        win.geometry("460x300")
+        win.transient(self.root)
+        win.grab_set()
 
+        crypto_data = load_crypto_data()
+        currencies = crypto_data.get("Cryptocurrency", [])
+        networks = crypto_data.get("blockchain", [])
+
+        ctk.CTkLabel(win, text="货币名称:", font=("Arial", 11)).pack(anchor="w", padx=14, pady=(14, 0))
+        cur_var = ctk.StringVar()
+        cur_entry = ctk.CTkEntry(win, textvariable=cur_var, placeholder_text="如 BTC / USDC / ETH")
+        cur_entry.pack(fill="x", padx=14, pady=(2, 6))
+
+        ctk.CTkLabel(win, text="钱包地址:", font=("Arial", 11)).pack(anchor="w", padx=14, pady=(4, 0))
+        addr_var = ctk.StringVar()
+        addr_entry = ctk.CTkEntry(win, textvariable=addr_var, placeholder_text="粘贴地址…")
+        addr_entry.pack(fill="x", padx=14, pady=(2, 6))
+
+        ctk.CTkLabel(win, text="网络/链:", font=("Arial", 11)).pack(anchor="w", padx=14, pady=(4, 0))
+        net_var = ctk.StringVar()
+        net_entry = ctk.CTkEntry(win, textvariable=net_var, placeholder_text="如 Bitcoin / Solana / Ethereum")
+        net_entry.pack(fill="x", padx=14, pady=(2, 10))
+
+        # ---- Tab 补全辅助（同时支持鼠标点击候选）----
+        def make_completer(entry, var, name_list):
+            listbox = None
+            def refresh_listbox():
+                nonlocal listbox
+                prefix = var.get()
+                matches = match_prefix(name_list, prefix)
+                if not matches:
+                    if listbox:
+                        listbox.destroy()
+                        listbox = None
+                    return
+                if listbox is None:
+                    listbox = ctk.CTkListbox(win, height=min(len(matches), 5), width=entry.winfo_width())
+                    listbox.place(in_=entry, x=0, y=entry.winfo_height() + 2)
+                else:
+                    listbox.delete(0, "end")
+                for m in matches:
+                    listbox.insert("end", m)
+            def on_tab(event):
+                nonlocal listbox
+                refresh_listbox()
+                if listbox:
+                    listbox.focus_set()
+                    listbox.select(0)
+                return "break"
+            def on_key(event):
+                if event.keysym in ("Return", "Escape"):
+                    if listbox:
+                        listbox.destroy()
+                        listbox = None
+                else:
+                    win.after(50, refresh_listbox)
+            def on_listbox_select(evt):
+                if not listbox:
+                    return
+                sel = listbox.get(listbox.curselection()) if listbox.curselection() else None
+                if sel:
+                    var.set(sel)
+                    listbox.destroy()
+                    # 焦点回到对应 entry 并移动光标到末尾
+                    entry.focus_set()
+                    entry.icursor("end")
+            entry.bind("<Tab>", on_tab)
+            var.trace_add("write", lambda *a: win.after(50, refresh_listbox))
+            entry.bind("<KeyRelease>", on_key)
+            if listbox is not None:
+                listbox.bind("<<ListboxSelect>>", on_listbox_select)
+            return listbox
+
+        # 为货币和网络分别绑定补全
+        make_completer(cur_entry, cur_var, currencies)
+        make_completer(net_entry, net_var, networks)
+
+        def do_send():
+            cur = cur_var.get().strip()
+            addr = addr_var.get().strip()
+            net = net_var.get().strip()
+            if not cur or not addr or not net:
+                self._show_error("请填写货币名称、钱包地址和网络")
+                return
+            text = build_collection_text(cur, addr, net)
+            # 直接走发送流程
+            self.msg_var.set(text)
+            win.destroy()
+            self._send_text()
+
+        ctk.CTkButton(win, text="生成并发送", command=do_send).pack(pady=10)
+        cur_entry.focus_set()
+
+    # ===== 已读回执（可视区域）=====
     def _on_scroll_or_resize(self):
-        """滚动或窗口大小变化时触发，防抖后检查可见消息。"""
         if not self._visible_check_pending:
             self._visible_check_pending = True
             self.root.after(150, self._check_visible_messages)
 
     def _check_visible_messages(self):
-        """
-        检查所有接收消息的顶部和底部是否都曾被用户看到。
-        一旦两者都为 True，则发送已读回执。
-        """
         self._visible_check_pending = False
-        if not self.read_receipts_enabled:
+        if not self.read_receipts_enabled or not self.current_contact:
             return
-        if not self.current_contact:
-            return
-
         try:
             canvas = self.chat_scroll._parent_canvas
             inner = self.chat_scroll._inner_frame
-
-            # 获取内部框架在画布上的 y 偏移（因滚动而变）
-            inner_y = inner.winfo_y()  # 可为负
+            inner_y = inner.winfo_y()
             canvas_height = canvas.winfo_height()
             if canvas_height <= 0:
                 return
-
-            # 可视区域顶部为 0，底部为 canvas_height
-            top_visible = 0
-            bottom_visible = canvas_height
-
-            # 遍历当前所有消息控件
             for item in self._message_widgets:
                 if item["receipt_sent"]:
                     continue
@@ -695,107 +790,71 @@ class MainWindow:
                 widget_height = widget.winfo_height()
                 if widget_height <= 0:
                     continue
-                # 消息在画布上的实际 y
                 canvas_y = inner_y + widget_y
-                # 检查顶部是否可见
-                if canvas_y >= top_visible and canvas_y <= bottom_visible:
+                if canvas_y >= 0 and canvas_y <= canvas_height:
                     item["top_seen"] = True
-                # 检查底部是否可见
                 bottom_y = canvas_y + widget_height
-                if bottom_y >= top_visible and bottom_y <= bottom_visible:
+                if bottom_y >= 0 and bottom_y <= canvas_height:
                     item["bottom_seen"] = True
-                # 如果顶部和底部都曾被看到，且未发送回执，则发送
                 if item["top_seen"] and item["bottom_seen"] and not item["receipt_sent"]:
                     self._send_read_receipt(self.current_contact, item["msg_id"])
                     item["receipt_sent"] = True
         except Exception as e:
             print(f"[VISIBLE] Check error: {e}")
 
-    # ===== 全部标记为已读（新增功能） =====
-
     def _mark_all_read(self, contact_uuid: str):
-        """
-        将该联系人的所有未读消息标记为已读，并发送已读回执。
-        包括当前屏幕上未显示的离线消息。
-        """
         if not self.read_receipts_enabled:
             self._show_info("已读回执功能已关闭，无法标记")
             return
-
-        # 从数据库获取该联系人的所有未读接收消息的 server_msg_id
         db_path = self.msg_store.db_path
         conn = sqlite3.connect(db_path)
         c = conn.cursor()
         c.execute(
             "SELECT server_msg_id FROM messages WHERE contact_uuid=? AND direction='recv' "
             "AND server_msg_id IS NOT NULL AND delivery_status != 'read'",
-            (contact_uuid,)
-        )
+            (contact_uuid,))
         rows = c.fetchall()
         conn.close()
-
         if not rows:
             self._show_info("该联系人没有未读消息")
             return
-
         server_ids = [row[0] for row in rows]
         count = len(server_ids)
-
-        # 逐个发送已读回执
         for sid in server_ids:
             self._send_read_receipt(contact_uuid, sid)
-            # 更新数据库状态为已读
             self.msg_store.update_delivery_status_by_server_id(sid, "read")
-
-        # 更新UI中当前显示的对应消息状态
         for item in self._message_widgets:
             if item["msg_id"] in server_ids:
                 item["receipt_sent"] = True
                 item["top_seen"] = True
                 item["bottom_seen"] = True
                 self._update_receipt_display(item["msg_id"], "read")
-
         self._show_info(f"已标记 {count} 条消息为已读")
 
-    # ===== 已读回执发送（旧方法，保留但不再自动调用） =====
-
     def _send_read_receipts_for_visible(self, contact_uuid: str):
-        """
-        旧方法：基于数据库发送最近消息的回执，现已改为基于可视区域。
-        保留此方法以防其他调用，但实际不再使用。
-        """
-        # 不再执行任何操作，由 _check_visible_messages 和 _mark_all_read 替代
         pass
 
     def _send_read_receipt(self, from_uuid: str, server_msg_id: str):
-        """向服务器发送已读回执。"""
         try:
             receipt = {
-                "type": READ_RECEIPT,
-                "server_msg_id": server_msg_id,
-                "from_uuid": from_uuid,
-                "timestamp": int(time.time()),
+                "type": READ_RECEIPT, "server_msg_id": server_msg_id,
+                "from_uuid": from_uuid, "timestamp": int(time.time()),
             }
             self.tcp.send(receipt)
         except Exception as e:
             print(f"[READ_RECEIPT] Send failed: {e}")
 
     # ===== 接收消息处理 =====
-
     def _on_message(self, msg: dict):
-        """处理接收到的 RECV_MSG。"""
         from_uuid = msg.get("from_uuid", "")
         encrypted = msg.get("encrypted_payload", {})
         msg_type = encrypted.get("type", "text")
         server_msg_id = msg.get("server_msg_id", "")
         client_msg_id = msg.get("client_msg_id", "")
-
         if from_uuid not in self.contact_pubkeys:
             self._fetch_peer_pubkey(from_uuid)
-
         if from_uuid not in self.contact_pubkeys:
             return
-
         try:
             if msg_type == "file":
                 nonce_b64 = encrypted.get("nonce", "")
@@ -813,42 +872,32 @@ class MainWindow:
                         fp = os.path.join(dl_dir, fname)
                         with open(fp, "wb") as f:
                             f.write(data)
-
                     self.msg_store.add_message(
                         from_uuid, "recv", f"[文件] {fname}",
                         filename=fname, filesize=len(data), is_file=True,
-                        delivery_status="delivered",
-                        server_msg_id=server_msg_id,
+                        delivery_status="delivered", server_msg_id=server_msg_id,
                     )
                     if self.current_contact == from_uuid:
-                        self._display_file_message(
-                            {"filename": fname, "filesize": len(data)},
-                            "recv",
-                            msg_id=server_msg_id,  # 使用 server_msg_id
-                        )
-                        # 显示后检查可见性
+                        self._display_file_message({"filename": fname, "filesize": len(data)}, "recv", msg_id=server_msg_id)
                         self.root.after(100, self._check_visible_messages)
             else:
                 plaintext = decrypt_message(
-                    encrypted,
-                    self.identity["x25519_private"],
+                    encrypted, self.identity["x25519_private"],
                     self.contact_pubkeys[from_uuid]["x25519"],
                     self.contact_pubkeys[from_uuid]["ed25519"]
                 )
                 ts = encrypted.get("timestamp", 0)
                 self.msg_store.add_message(
                     from_uuid, "recv", plaintext,
-                    timestamp=ts, delivery_status="delivered",
-                    server_msg_id=server_msg_id,
+                    timestamp=ts, delivery_status="delivered", server_msg_id=server_msg_id,
                 )
                 if self.current_contact == from_uuid:
-                    self._display_text_message(
-                        plaintext, "recv", ts,
-                        msg_id=server_msg_id  # 使用 server_msg_id
-                    )
-                    # 显示后检查可见性
+                    # Collection 消息渲染为卡片
+                    if is_collection_text(plaintext):
+                        self._display_collection_card(plaintext, "recv", ts, msg_id=server_msg_id)
+                    else:
+                        self._display_text_message(plaintext, "recv", ts, msg_id=server_msg_id)
                     self.root.after(100, self._check_visible_messages)
-
         except Exception as e:
             self._show_error(f"消息解密失败: {e}")
 
@@ -857,78 +906,48 @@ class MainWindow:
             self._on_message(msg)
 
     # ===== 回执处理 =====
-
     def _on_delivery_receipt(self, msg: dict):
-        """
-        收到送达回执：
-        - server_msg_id → 更新对应消息状态为「已送达」
-        """
         server_msg_id = msg.get("server_msg_id", "")
         client_msg_id = msg.get("client_msg_id", "")
         status = msg.get("status", "delivered")
-
-        # 通过 server_msg_id 或 client_msg_id 找到数据库记录并更新
         if server_msg_id:
             self.msg_store.update_delivery_status_by_server_id(server_msg_id, status)
         if client_msg_id:
             self.msg_store.update_delivery_status_by_msg_id(client_msg_id, status)
-
-        # 更新 UI
         if client_msg_id:
             self._update_receipt_display(client_msg_id, status)
-
         print(f"[RECEIPT] ✓ Delivered: {client_msg_id[:16]}... status={status}")
 
     def _on_read_receipt(self, msg: dict):
-        """
-        收到已读回执：
-        - 将对应消息状态更新为「已读」
-        """
         server_msg_id = msg.get("server_msg_id", "")
         client_msg_id = msg.get("client_msg_id", "")
         from_uuid = msg.get("from_uuid", "")
-
         if server_msg_id:
             self.msg_store.update_delivery_status_by_server_id(server_msg_id, "read")
         if client_msg_id:
             self.msg_store.update_delivery_status_by_msg_id(client_msg_id, "read")
             self._update_receipt_display(client_msg_id, "read")
-
         print(f"[RECEIPT] ✓✓ Read: {client_msg_id[:16]}... from={from_uuid[:16]}...")
 
     def _on_read_receipt_disabled(self, msg: dict):
-        """
-        对方关闭了已读回执 → 显示提示信息。
-        """
-        server_msg_id = msg.get("server_msg_id", "")
         client_msg_id = msg.get("client_msg_id", "")
         reason = msg.get("reason", "对方已关闭已读回执功能")
-
         if client_msg_id:
-            # 更新为「已送达」但不显示已读
             self._update_receipt_display(client_msg_id, "delivered")
-            # 在聊天中追加一行小字提示
             self._append_system_notice(f"📌 {reason}，不会收到已读回执")
-
         print(f"[RECEIPT] Read receipts disabled by peer: {reason}")
 
     def _append_system_notice(self, text: str):
-        """在聊天区追加一行系统通知（灰色小字）。"""
-        notice = ctk.CTkLabel(
-            self.chat_scroll, text=text,
-            font=("Arial", 9), text_color="#888888"
-        )
+        notice = ctk.CTkLabel(self.chat_scroll, text=text, font=("Arial", 9), text_color="#888888")
         notice.pack(anchor="center", padx=10, pady=2)
         self._scroll_chat_to_bottom()
 
     # ===== 群组消息 =====
-
     def _on_group_message(self, msg: dict):
         group_id = msg.get("group_id", "")
         from_uuid = msg.get("from_uuid", "")
         encrypted = msg.get("encrypted_payload", {})
         timestamp = msg.get("timestamp", int(time.time()))
-
         if from_uuid in self.contact_pubkeys:
             try:
                 plaintext = decrypt_message(
@@ -971,25 +990,20 @@ class MainWindow:
                 self.identity["ed25519_private"], self.uuid, group_id
             )
             env = {
-                "type": SEND_GROUP_MSG,
-                "group_id": group_id,
-                "encrypted_payload": encrypted,
-                "client_msg_id": client_msg_id,
+                "type": SEND_GROUP_MSG, "group_id": group_id,
+                "encrypted_payload": encrypted, "client_msg_id": client_msg_id,
             }
             sig_data = json.dumps(env, sort_keys=True).encode()
             e_priv = load_ed25519_private(self.identity["ed25519_private"])
             signature = sign_data(e_priv, sig_data)
-
             self.cross_server.send_group_message(group_id, encrypted, signature)
             group_key = f"group:{group_id}"
             self.msg_store.add_message(group_key, "sent", text,
                                        timestamp=encrypted["timestamp"],
-                                       delivery_status="sending",
-                                       msg_id=client_msg_id)
+                                       delivery_status="sending", msg_id=client_msg_id)
             self._display_text_message(f"[我] {text}", "sent",
                                         encrypted["timestamp"],
-                                        delivery_status="sending",
-                                        msg_id=client_msg_id)
+                                        delivery_status="sending", msg_id=client_msg_id)
         except Exception as e:
             self._show_error(f"群消息发送失败: {e}")
 
@@ -1011,7 +1025,6 @@ class MainWindow:
         members_entry.pack(pady=2)
         fed_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(win, text="跨服务器联邦群", variable=fed_var).pack(pady=10)
-
         def do_create():
             name = name_entry.get().strip()
             members_raw = members_entry.get().strip()
@@ -1022,7 +1035,6 @@ class MainWindow:
             self.cross_server.create_group(name, members, federated=fed_var.get())
             win.destroy()
             self._show_info(f"正在创建群 '{name}'...")
-
         ctk.CTkButton(win, text="创建", command=do_create).pack(pady=10)
 
     def _search_group_dialog(self):
@@ -1031,10 +1043,8 @@ class MainWindow:
             self.cross_server.search_groups(query, scope="global")
 
     # ===== 网络事件 =====
-
     def _on_broadcast(self, msg: dict):
-        text = msg.get("text", "")
-        self._show_info(f"📢 系统广播: {text}")
+        self._show_info(f"📢 系统广播: {msg.get('text', '')}")
 
     def _on_error(self, err: str):
         self._show_error(f"网络错误: {err}")
@@ -1043,7 +1053,6 @@ class MainWindow:
         self._show_error("与服务器断开连接")
 
     # ===== 管理员 =====
-
     def _on_admin_result(self, result: dict):
         if isinstance(result, dict) and result.get("type") == "auth_ok":
             self.admin_token = result.get("token")
@@ -1061,9 +1070,6 @@ class MainWindow:
             "x25519": msg.get("x25519_public", ""),
             "ed25519": msg.get("ed25519_public", ""),
         }
-        for c in self.contacts:
-            if c["uuid"] == uuid_str and "name" not in c:
-                break
         self._save_contacts_list()
 
     def _on_rate_limited(self, reason: str):
@@ -1074,8 +1080,6 @@ class MainWindow:
         wipe_all_data()
         self.root.quit()
         sys.exit(0)
-
-    # ===== 查找结果 =====
 
     def _on_lookup_result(self, msg: dict):
         results = msg.get("results", [])
@@ -1100,25 +1104,19 @@ class MainWindow:
                         "blocked": False, "server_node_id": server_id,
                     })
                 if pub_x and pub_e:
-                    self.contact_pubkeys[uuid_str] = {
-                        "x25519": pub_x, "ed25519": pub_e
-                    }
+                    self.contact_pubkeys[uuid_str] = {"x25519": pub_x, "ed25519": pub_e}
         self._save_contacts_list()
         self._refresh_contact_list_ctk()
         self._show_info(f"找到 {len(results)} 个用户，已添加到联系人")
 
     def _on_group_list_result(self, msg: dict):
-        groups = msg.get("groups", [])
-        self._my_groups = groups
-        self._show_info(f"你加入了 {len(groups)} 个群聊")
+        self._my_groups = msg.get("groups", [])
+        self._show_info(f"你加入了 {len(self._my_groups)} 个群聊")
 
     def _on_group_info_result(self, msg: dict):
         group = msg.get("group", {})
         members = msg.get("members", [])
-        info = f"群: {group.get('name','')}\n"
-        info += f"ID: {group.get('group_id','')[:16]}...\n"
-        info += f"成员数: {len(members)}\n"
-        info += f"联邦: {'是' if group.get('is_federated') else '否'}\n"
+        info = f"群: {group.get('name','')}\nID: {group.get('group_id','')[:16]}...\n成员数: {len(members)}\n"
         for m in members[:10]:
             info += f"  - {m.get('uuid','')[:16]}... {'👑' if m.get('is_admin') else ''}\n"
         if len(members) > 10:
@@ -1145,8 +1143,6 @@ class MainWindow:
         else:
             self._show_error(f"群创建失败: {status}")
 
-    # ===== 公钥获取 =====
-
     def _fetch_peer_pubkey(self, uuid_str: str):
         try:
             self.tcp.query_pubkey(uuid_str)
@@ -1154,7 +1150,6 @@ class MainWindow:
             pass
 
     # ===== 管理员面板 =====
-
     def _open_admin_panel(self):
         if not self.is_admin:
             pin = simpledialog.askstring("管理员认证", "输入管理员PIN:", show="*", parent=self.root)
@@ -1170,44 +1165,36 @@ class MainWindow:
         win = ctk.CTkToplevel(self.root)
         win.title("🔧 服务器管理")
         win.geometry("500x600")
-
         tabview = ctk.CTkTabview(win)
         tabview.pack(fill="both", expand=True, padx=10, pady=10)
-
         tab_users = tabview.add("用户管理")
         ctk.CTkButton(tab_users, text="查看在线用户", command=lambda: self._admin_cmd(CMD_LIST_ONLINE)).pack(pady=5)
         ctk.CTkButton(tab_users, text="查看所有用户", command=lambda: self._admin_cmd(CMD_LIST_ALL_USERS)).pack(pady=5)
-
         ctk.CTkLabel(tab_users, text="创建用户:").pack(pady=(10, 0))
         self.admin_create_name = ctk.CTkEntry(tab_users, placeholder_text="用户名")
         self.admin_create_name.pack(pady=2)
         ctk.CTkButton(tab_users, text="创建", command=self._admin_create_user).pack(pady=2)
-
         ctk.CTkLabel(tab_users, text="封禁用户(UUID):").pack(pady=(10, 0))
         self.admin_ban_uuid = ctk.CTkEntry(tab_users, placeholder_text="UUID")
         self.admin_ban_uuid.pack(pady=2)
         ctk.CTkButton(tab_users, text="封禁", command=lambda: self._admin_cmd(CMD_BAN_USER, {"uuid": self.admin_ban_uuid.get()})).pack(pady=2)
-
         tab_rate = tabview.add("限速")
         ctk.CTkLabel(tab_rate, text="全局限速(秒/条):").pack(pady=(10, 0))
         self.admin_rate = ctk.CTkEntry(tab_rate, placeholder_text="0.5")
         self.admin_rate.pack(pady=2)
         ctk.CTkButton(tab_rate, text="设置", command=lambda: self._admin_cmd(CMD_SET_RATE_LIMIT, {"seconds": float(self.admin_rate.get() or 0.5)})).pack(pady=5)
-
         tab_file = tabview.add("文件")
         ctk.CTkLabel(tab_file, text="最大文件(MB):").pack(pady=(10, 0))
         self.admin_maxfile = ctk.CTkEntry(tab_file, placeholder_text="100")
         self.admin_maxfile.pack(pady=2)
         ctk.CTkButton(tab_file, text="设置", command=lambda: self._admin_cmd(CMD_SET_MAX_FILE_SIZE, {"mb": int(self.admin_maxfile.get() or 100)})).pack(pady=5)
         ctk.CTkButton(tab_file, text="清理过期文件", command=lambda: self._admin_cmd(CMD_CLEANUP_FILES)).pack(pady=5)
-
         tab_dht = tabview.add("DHT网络")
         ctk.CTkButton(tab_dht, text="查看路由表", command=lambda: self._admin_cmd(CMD_DHT_ROUTING_TABLE)).pack(pady=5)
         ctk.CTkButton(tab_dht, text="节点数", command=lambda: self._admin_cmd(CMD_DHT_NODE_COUNT)).pack(pady=5)
         ctk.CTkLabel(tab_dht, text="隐藏模式:").pack(pady=(10, 0))
         ctk.CTkButton(tab_dht, text="开启隐藏", command=lambda: self._admin_cmd(CMD_SET_HIDDEN, {"hidden": True})).pack(pady=2)
         ctk.CTkButton(tab_dht, text="关闭隐藏", command=lambda: self._admin_cmd(CMD_SET_HIDDEN, {"hidden": False})).pack(pady=2)
-
         tab_sys = tabview.add("系统")
         ctk.CTkButton(tab_sys, text="查看日志", command=lambda: self._admin_cmd(CMD_GET_LOGS, {"lines": 50})).pack(pady=5)
         ctk.CTkButton(tab_sys, text="连接统计", command=lambda: self._admin_cmd(CMD_CONN_STATS)).pack(pady=5)
@@ -1216,9 +1203,6 @@ class MainWindow:
         self.admin_bcast.pack(pady=2)
         ctk.CTkButton(tab_sys, text="发送广播", command=lambda: self._admin_cmd(CMD_BROADCAST_MSG, {"text": self.admin_bcast.get()})).pack(pady=2)
         ctk.CTkButton(tab_sys, text="优雅关机", command=lambda: self._admin_cmd(CMD_SHUTDOWN)).pack(pady=(10, 0))
-
-        self.admin_result_text = ctk.CTkTextbox(win, height=150)
-        self.admin_result_text.pack(fill="x", padx=10, pady=10)
 
     def _admin_cmd(self, command: str, params: dict = None):
         if not self.admin_token:
@@ -1234,39 +1218,29 @@ class MainWindow:
         self._admin_cmd(CMD_CREATE_USER, {"name": name})
 
     # ===== 设置窗口 =====
-
     def _open_settings(self):
         win = ctk.CTkToplevel(self.root)
         win.title("设置")
-        win.geometry("420x450")
-
+        win.geometry("420x500")
         ctk.CTkLabel(win, text="发送消息颜色 (HEX):").pack(pady=(10, 0))
         sent_color = ctk.CTkEntry(win, placeholder_text=self.config.get("sent_message_color", DEFAULT_SENT_COLOR))
         sent_color.pack(pady=2)
         sent_color.insert(0, self.config.get("sent_message_color", DEFAULT_SENT_COLOR))
-
         ctk.CTkLabel(win, text="接收消息颜色 (HEX):").pack(pady=(10, 0))
         recv_color = ctk.CTkEntry(win, placeholder_text=self.config.get("recv_message_color", DEFAULT_RECV_COLOR))
         recv_color.pack(pady=2)
         recv_color.insert(0, self.config.get("recv_message_color", DEFAULT_RECV_COLOR))
-
         ctk.CTkLabel(win, text="按钮颜色 (HEX):").pack(pady=(10, 0))
         btn_color = ctk.CTkEntry(win, placeholder_text=self.config.get("send_button_color", DEFAULT_BUTTON_COLOR))
         btn_color.pack(pady=2)
         btn_color.insert(0, self.config.get("send_button_color", DEFAULT_BUTTON_COLOR))
-
         auto_dl = ctk.BooleanVar(value=self.config.get("auto_download_files", True))
         ctk.CTkCheckBox(win, text="自动下载文件", variable=auto_dl).pack(pady=10)
 
-        # ===== 已读回执开关 =====
         ctk.CTkLabel(win, text="── 隐私 ──", font=("Arial", 12, "bold")).pack(pady=(10, 5))
         read_rcpt_var = ctk.BooleanVar(value=self.read_receipts_enabled)
-        ctk.CTkCheckBox(
-            win, text="发送已读回执（关闭后不会通知对方你已读消息）",
-            variable=read_rcpt_var
-        ).pack(pady=5, padx=10, anchor="w")
+        ctk.CTkCheckBox(win, text="发送已读回执（关闭后不会通知对方你已读消息）", variable=read_rcpt_var).pack(pady=5, padx=10, anchor="w")
 
-        # ===== 个人资料 =====
         ctk.CTkLabel(win, text="── 个人资料 ──", font=("Arial", 12, "bold")).pack(pady=(15, 5))
         current_name = get_display_name()
         ctk.CTkLabel(win, text="显示名称 (4-32字节 UTF-8):").pack(anchor="w", padx=10)
@@ -1274,22 +1248,16 @@ class MainWindow:
         name_entry.pack(fill="x", padx=10, pady=2)
         if current_name:
             name_entry.insert(0, current_name)
-
         btn_row = ctk.CTkFrame(win)
         btn_row.pack(fill="x", padx=10, pady=5)
-        ctk.CTkButton(btn_row, text="📷 设置头像", width=100,
-                      command=self._choose_avatar).pack(side="left", padx=5)
-        ctk.CTkButton(btn_row, text="🗑 清除头像", width=100,
-                      command=self._clear_avatar_btn).pack(side="left", padx=5)
-        ctk.CTkButton(win, text="保存显示名称", width=120,
-                      command=lambda: self._save_display_name(name_entry.get())).pack(pady=5)
+        ctk.CTkButton(btn_row, text="📷 设置头像", width=100, command=self._choose_avatar).pack(side="left", padx=5)
+        ctk.CTkButton(btn_row, text="🗑 清除头像", width=100, command=self._clear_avatar_btn).pack(side="left", padx=5)
+        ctk.CTkButton(win, text="保存显示名称", width=120, command=lambda: self._save_display_name(name_entry.get())).pack(pady=5)
 
-        # ===== 群聊 =====
         ctk.CTkLabel(win, text="── 群聊 ──", font=("Arial", 12, "bold")).pack(pady=(15, 5))
         ctk.CTkButton(win, text="➕ 创建群聊", command=self._create_group_dialog).pack(pady=2)
         ctk.CTkButton(win, text="🔍 搜索群聊", command=self._search_group_dialog).pack(pady=2)
         ctk.CTkButton(win, text="📋 我的群聊", command=lambda: self.cross_server.list_my_groups()).pack(pady=2)
-
         ctk.CTkButton(win, text="🔧 管理员登录", command=self._open_admin_panel).pack(pady=5)
 
         def save():
@@ -1297,45 +1265,30 @@ class MainWindow:
             self.config["recv_message_color"] = recv_color.get() or DEFAULT_RECV_COLOR
             self.config["send_button_color"] = btn_color.get() or DEFAULT_BUTTON_COLOR
             self.config["auto_download_files"] = auto_dl.get()
-            # 保存已读回执设置
             self.read_receipts_enabled = read_rcpt_var.get()
             self.config["read_receipts_enabled"] = self.read_receipts_enabled
             save_config(self.config)
             self._show_info("设置已保存")
             win.destroy()
-
         ctk.CTkButton(win, text="保存全部", command=save).pack(pady=10)
-
-    # ===== 头像 / 显示名称 =====
 
     def _choose_avatar(self):
         path = filedialog.askopenfilename(
             title="选择头像图片",
             filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp *.gif"), ("All files", "*.*")],
-            parent=self.root,
-        )
+            parent=self.root)
         if path:
             ok, msg = set_avatar(path)
-            if ok:
-                self._show_info(msg)
-            else:
-                self._show_error(msg)
+            self._show_info(msg) if ok else self._show_error(msg)
 
     def _clear_avatar_btn(self):
-        if clear_avatar():
-            self._show_info("头像已清除")
-        else:
-            self._show_error("清除头像失败")
+        self._show_info("头像已清除") if clear_avatar() else self._show_error("清除头像失败")
 
     def _save_display_name(self, name: str):
         ok, msg = set_display_name(name.strip())
-        if ok:
-            self._show_info(msg)
-        else:
-            self._show_error(msg)
+        self._show_info(msg) if ok else self._show_error(msg)
 
     # ===== 工具方法 =====
-
     def _get_contact(self, uuid_str: str):
         for c in self.contacts:
             if c["uuid"] == uuid_str:
@@ -1365,14 +1318,12 @@ class MainWindow:
             messagebox.showinfo("提示", msg)
 
     # ===== 启动 / 关闭 =====
-
     def _connect_and_login(self):
         try:
             self.tcp.connect()
             e_priv = load_ed25519_private(self.identity["ed25519_private"])
             login_data = json.dumps({
-                "type": LOGIN, "uuid": self.uuid,
-                "ed25519_public": self.identity["ed25519_public"]
+                "type": LOGIN, "uuid": self.uuid, "ed25519_public": self.identity["ed25519_public"]
             }, sort_keys=True).encode()
             signature = sign_data(e_priv, login_data)
             self.tcp.login(self.uuid, self.identity["ed25519_public"], signature)
