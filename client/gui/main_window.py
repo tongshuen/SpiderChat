@@ -99,6 +99,26 @@ class MainWindow:
         self._message_widgets = []
         self._visible_check_pending = False
 
+        # ===== 安全功能引擎 =====
+        try:
+            from client.security.ephemeral import EphemeralEngine
+            from client.security.vault import MessageVault
+            self.ephemeral = EphemeralEngine(self.config)
+            self.vault = MessageVault(self.msg_store.db_path,
+                                      self.config.get("vault_pin", ""))
+            if self.config.get("vault_enabled") and self.config.get("vault_pin"):
+                try:
+                    self.vault.unlock(self.config["vault_pin"])
+                except Exception:
+                    self.vault = None
+            elif not self.config.get("vault_enabled"):
+                self.vault = None
+            else:
+                self.vault = None
+        except Exception:
+            self.ephemeral = None
+            self.vault = None
+
         self._build_ui()
         self._connect_and_login()
 
@@ -823,6 +843,14 @@ class MainWindow:
         for sid in server_ids:
             self._send_read_receipt(contact_uuid, sid)
             self.msg_store.update_delivery_status_by_server_id(sid, "read")
+            # 阅后即焚：对已读消息按规则触发删除
+            if self.ephemeral is not None:
+                try:
+                    client_mid = self.msg_store.get_msg_id_by_server_id(sid)
+                    self.ephemeral.burn_if_matches(
+                        contact_uuid, client_mid, "", self.msg_store)
+                except Exception:
+                    pass
         for item in self._message_widgets:
             if item["msg_id"] in server_ids:
                 item["receipt_sent"] = True
@@ -841,6 +869,14 @@ class MainWindow:
                 "from_uuid": from_uuid, "timestamp": int(time.time()),
             }
             self.tcp.send(receipt)
+            # 阅后即焚：对已读消息按规则触发删除
+            if self.ephemeral is not None and self.current_contact:
+                try:
+                    client_mid = self.msg_store.get_msg_id_by_server_id(server_msg_id)
+                    self.ephemeral.burn_if_matches(
+                        self.current_contact, client_mid, "", self.msg_store)
+                except Exception:
+                    pass
         except Exception as e:
             print(f"[READ_RECEIPT] Send failed: {e}")
 
