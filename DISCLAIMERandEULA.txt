@@ -107,7 +107,14 @@ Spider 软件免责声明和最终用户许可协议（扩展版）（中文）
 - 您应自行评估并选择可信的服务器实例。
 - 若您使用公共网络，应额外注意通信安全。
 
-为保障搜索性能，本软件的聊天记录数据库（SQLite）未进行加密存储，因为对数据库加密将显著增加内存消耗并影响搜索效率。因此，若您涉及敏感内容的聊天记录，建议在阅读后及时手动删除。如因设备丢失、被盗或其他原因导致聊天记录泄露，开发者不承担任何责任。
+7.1 聊天记录加密保险库（可选）
+本软件提供可选的"聊天记录加密保险库"功能。启用后，本地聊天记录数据库（SQLite）中的消息明文会以 AES-256-GCM 按消息分片加密存储，每条消息使用由其消息 ID 派生的独立密钥，搜索时逐条（分片）解密匹配，避免一次性将整库解密加载到内存。保险库的主密钥由您设置的保险库 PIN 经 PBKDF2-HMAC-SHA256 派生，盐值为随机生成并与库一同存储。开发者不持有您的主密钥或保险库 PIN；若您遗忘保险库 PIN，已加密的聊天记录将无法恢复，开发者不承担由此产生的数据丢失责任。
+
+7.2 阅后即焚（可选）
+本软件提供可选的"阅后即焚"功能，支持按全局、按指定联系人 UUID 列表、或按命中指定正则表达式的消息文本三种规则自动删除已读消息，并支持"快速删除"（直接删除）与"安全删除"（先以随机数据覆写后再删除，含关联附件）两种模式。阅后即焚在发送/收到已读回执后对匹配消息触发删除；由于消息气泡已渲染在内存中，屏幕上的消息不会立即消失，而是在下次打开聊天窗口重新加载时方才消失。安全删除受 SQLite 文件结构与存储介质（如 SSD 磨损均衡）特性限制，无法保证在物理层面上彻底不可恢复，敏感场景请结合设备全盘加密使用。
+
+7.3 责任提示
+加密与阅后即焚功能的安全强度取决于您所使用的 PIN/密码强度、设备自身安全性及存储介质特性。开发者已尽合理努力实现上述功能，但不对以下功能相关事项作任何保证：保险库 PIN 遗忘导致的不可恢复、存储介质上的残留数据、或任何因您使用（或误用）上述功能而产生的数据泄露或损失。若某些司法管辖区不允许排除或限制间接损害的责任，则上述限制仅在该等法律强制要求的范围内不适用。
 
 
 八、免责声明和最终用户许可协议的变更
@@ -263,7 +270,14 @@ However, please note:
 - You should evaluate and choose a trusted server instance at your own discretion.
 - If you use public networks, you should pay extra attention to communication security.
 
-For performance reasons, the chat history database (SQLite) is stored in plaintext, as encrypting the database would significantly increase memory consumption and adversely affect search performance. Therefore, if you exchange sensitive information, it is strongly recommended that you delete the chat history after reading it. The developer shall not be held responsible for any leakage of chat records due to device loss, theft, or other causes.
+7.1 Chat History Encryption Vault (Optional)
+This Software provides an optional "Chat History Encryption Vault". When enabled, the plaintext of messages in the local chat history database (SQLite) is stored encrypted with AES-256-GCM on a per-message basis; each message uses an independent key derived from its message ID, and search decrypts messages piecewise (one by one) to avoid loading and decrypting the entire database into memory at once. The vault's master key is derived from your vault PIN via PBKDF2-HMAC-SHA256, with a randomly generated salt stored alongside the database. The developer does not hold your master key or vault PIN; if you forget the vault PIN, encrypted chat records will be unrecoverable, and the developer assumes no liability for any resulting data loss.
+
+7.2 Ephemeral / Burn-on-Read (Optional)
+This Software provides an optional "Ephemeral / Burn-on-Read" feature. It supports automatically deleting read messages by three kinds of rules — globally, by a specified list of contact UUIDs, or by message text matching a specified regular expression — and offers two deletion modes: "fast delete" (direct deletion) and "secure delete" (overwrite with random data before deletion, including associated attachments). Ephemeral deletion is triggered after a read receipt is sent/received for a matching message. Because message bubbles are already rendered in memory, they will not disappear from the screen immediately, but will be gone the next time the chat window is reopened and reloaded. Secure delete is subject to the characteristics of SQLite file layout and storage media (e.g., SSD wear leveling), and cannot guarantee physical irrecoverability; for sensitive scenarios, please combine with full-disk encryption on your device.
+
+7.3 Responsibility Note
+The security strength of the encryption and ephemeral features depends on the strength of the PIN/password you choose, the security of your device, and the characteristics of the storage media. The developer has implemented the above features with reasonable effort, but makes no warranties regarding: unrecoverability due to forgetting the vault PIN, residual data on storage media, or any data leakage or loss arising from your use (or misuse) of these features. If certain jurisdictions do not allow the exclusion or limitation of liability for indirect damages, the above limitations shall apply only to the extent required by such mandatory law.
 
 VIII. CHANGES TO THIS DISCLAIMER AND EULA
 
