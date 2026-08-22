@@ -44,6 +44,7 @@ CHAT_DB_FILE = "messages.db"
 CONTACTS_FILE = "contacts.json"
 PEERS_FILE = "peers.json"
 DC_CONFIG_FILE = "direct_connect.json"
+PROFILE_FILE = "profile.json"
 
 
 
@@ -82,6 +83,15 @@ DEFAULT_SETTINGS = {
     "public_port": DEFAULT_TCP_PORT,
 
     "search_scope_default": "local",  # 本地/局域网/服务器/全局
+
+    # ===== 阅后即焚（安全功能） =====
+    "ephemeral_enabled": False,
+    "ephemeral_contact_uuids": [],
+    "ephemeral_regex_rules": [],
+    "ephemeral_secure_delete": False,  # False=快速删除，True=随机覆写后删
+
+    # ===== 聊天记录加密保险库（安全功能） =====
+    "vault_enabled": False,
 }
 
 
@@ -166,6 +176,10 @@ def identity_path():
 
 def contacts_path():
     return os.path.join(get_data_dir(), CONTACTS_FILE)
+
+
+def profile_path():
+    return os.path.join(get_data_dir(), PROFILE_FILE)
 
 
 def chat_db_path():
