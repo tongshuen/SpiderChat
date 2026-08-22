@@ -10,7 +10,7 @@ from collections import defaultdict
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from shared.protocol import DEFAULT_RATE_LIMIT, DEFAULT_BURST
+from shared.protocol import DEFAULT_RATE_LIMIT, DEFAULT_BURST_CAPACITY as DEFAULT_BURST
 
 
 class TokenBucket:
