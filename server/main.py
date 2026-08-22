@@ -29,11 +29,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from server.config.loader import load_config, get_data_dir
 from server.keyring_store.credentials import (
     get_server_keys, verify_admin_pin, get_node_id,
-    ensure_keyring_available
+    check_keyring_or_exit as ensure_keyring_available
 )
 from server.keyring_store.backend import check_keyring_or_exit, detect_headless
 from server.dht.node import DHTNode
-from server.dht.bootstrap import read_guide_file
+from server.dht.bootstrap import load_guide as read_guide_file
 from server.chat.server import ChatServer
 from server.chat.cross_server import CrossServerRelay
 from server.chat.group import GroupManager
