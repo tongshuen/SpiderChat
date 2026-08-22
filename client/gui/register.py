@@ -382,7 +382,20 @@ class RegisterWindow:
                 try:
                     tcp = TCPClient(host, port)
                     tcp.connect()
-                    tcp.send_compromised(uuid_str)
+                    # 构造并签署 COMPROMISED 通知（使用身份 Ed25519 私钥）
+                    from shared.crypto_utils import sign_data, load_ed25519_private
+                    e_priv_b64 = data.get("ed25519_private", "")
+                    comp_data = json.dumps(
+                        {"type": COMPROMISED, "uuid": uuid_str},
+                        sort_keys=True
+                    ).encode()
+                    comp_sig = ""
+                    if e_priv_b64:
+                        try:
+                            comp_sig = sign_data(load_ed25519_private(e_priv_b64), comp_data)
+                        except Exception:
+                            comp_sig = ""
+                    tcp.send_compromised(uuid_str, comp_sig)
                     tcp.disconnect()
                 except Exception as e:
                     print(f"[DURESS] Server notification failed: {e}")
