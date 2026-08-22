@@ -19,9 +19,15 @@ from shared.crypto_utils import (
     ecdh_shared_secret, hkdf_derive,
     aesgcm_encrypt, aesgcm_decrypt,
     sign_data, verify_signature,
-    current_timestamp, secure_token,
+    secure_token,
     NONCE_SIZE,
 )
+
+
+def current_timestamp() -> int:
+    """返回当前 Unix 时间戳（秒）。"""
+    import time as _time
+    return int(_time.time())
 
 
 def encrypt_message(
