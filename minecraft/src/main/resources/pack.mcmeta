@@ -1,0 +1,9 @@
+{
+  "pack": {
+    "description": "SpiderMinecraft resources",
+    "pack_format": 57,
+    "forge": {
+      "codecs": "net.neoforged.neoforge.common.data.Codecs"
+    }
+  }
+}

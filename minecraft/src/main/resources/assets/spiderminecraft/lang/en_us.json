@@ -1,0 +1,10 @@
+{
+  "commands.spiderminecraft.help": "SpiderMinecraft Command Help",
+  "commands.spiderminecraft.status": "SpiderMinecraft Status",
+  "commands.spiderminecraft.login": "Login",
+  "commands.spiderminecraft.duress": "Duress PIN",
+  "commands.spiderminecraft.msg": "Send Encrypted Message",
+  "commands.spiderminecraft.file": "File Transfer",
+  "commands.spiderminecraft.group": "Group",
+  "commands.spiderminecraft.burn": "Burn-after-read"
+}

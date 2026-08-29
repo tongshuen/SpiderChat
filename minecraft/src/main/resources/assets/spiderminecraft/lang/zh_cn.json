@@ -1,0 +1,10 @@
+{
+  "commands.spiderminecraft.help": "SpiderMinecraft 命令帮助",
+  "commands.spiderminecraft.status": "SpiderMinecraft 状态",
+  "commands.spiderminecraft.login": "登录",
+  "commands.spiderminecraft.duress": "胁迫 PIN",
+  "commands.spiderminecraft.msg": "发送加密消息",
+  "commands.spiderminecraft.file": "文件传输",
+  "commands.spiderminecraft.group": "群组",
+  "commands.spiderminecraft.burn": "阅后即焚"
+}
