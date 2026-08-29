@@ -84,6 +84,13 @@ DEFAULT_SETTINGS = {
 
     "search_scope_default": "local",  # 本地/局域网/服务器/全局
 
+    # ===== 网关（Gateway）自动判定 =====
+    # 网关节点模式：'auto'（自动，同时具备公网+SDR时为网关）/
+    #               'enabled'（强制开启）/ 'disabled'（强制关闭）
+    "gateway_mode": "auto",
+    # 直连网络共享：是否愿意为其他直连节点提供网络中继
+    "direct_network_sharing_enabled": True,
+
     # ===== 阅后即焚（安全功能） =====
     "ephemeral_enabled": False,
     "ephemeral_contact_uuids": [],

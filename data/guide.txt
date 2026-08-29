@@ -1,13 +1,13 @@
-# Spider DHT 引导节点
-# 格式：每行一个节点，格式为 host:port
-# 以 # 开头的行为注释
-# 端口为 DHT UDP 端口（与 TCP 聊天端口不同）
-# 请替换为实际的 Spider 服务器地址
+# Spider DHT Bootstrap Nodes
+# Format: one node per line as host:port
+# Lines starting with # are comments
+# Port is the DHT UDP port (separate from TCP chat port)
+# Replace these with actual Spider server addresses
 
-# 示例条目（参考这个格式，然后把这些换成任意一个现有节点的地址和端口即可）：
-bootstrap1.spider.example.com:7892
-bootstrap2.spider.example.org:7892
-192.168.1.100:7892
+# Example entries (commented out):
+# bootstrap1.spider.example.com:7892
+# bootstrap2.spider.example.org:7892
+# 192.168.1.100:7892
 
-# 当此文件为空（仅包含注释）时，服务器将作为种子节点启动，
-# 并通过 UDP 广播在本地网络中宣告自身。
+# When this file is empty (only comments), the server starts as a seed node
+# and announces itself on the local network via UDP broadcast.

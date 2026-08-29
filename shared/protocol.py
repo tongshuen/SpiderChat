@@ -133,5 +133,38 @@ MIN_ONION_LAYERS = 1
 # ===== 传输层 =====
 TRANSPORT_KEY_ROTATION_SEC = 3600  # 1小时轮换一次
 
+# ===== 直连（Direct Connect）消息类型 =====
+DC_HELLO = "DC_HELLO"
+DC_AUTH = "DC_AUTH"
+DC_SEND_MSG = "DC_SEND_MSG"
+DC_RECV_MSG = "DC_RECV_MSG"
+DC_FILE_CHUNK = "DC_FILE_CHUNK"
+DC_PING = "DC_PING"
+DC_PONG = "DC_PONG"
+DC_DISCONNECT = "DC_DISCONNECT"
+DC_ANNOUNCE = "DC_ANNOUNCE"
+DC_NODE_INFO = "DC_NODE_INFO"
+DC_RELAY_MSG = "DC_RELAY_MSG"
+# 直连网络共享：节点能力通告与流量中继
+DC_CAPABILITY = "DC_CAPABILITY"          # 节点网络能力通告（公网/无线电可达性）
+DC_NETWORK_RELAY = "DC_NETWORK_RELAY"    # 通过直连网关节点中继公网/无线电流量
+DC_ROUTE_QUERY = "DC_ROUTE_QUERY"        # 查询到达某个网络的最短直连路径
+DC_ROUTE_RESPONSE = "DC_ROUTE_RESPONSE"  # 直连路径查询应答
+# ===== 直连运行参数 =====
+MAX_DIRECT_CONNECTIONS = 50
+DIRECT_CONNECT_TIMEOUT = 15
+BLUETOOTH_SCAN_TIMEOUT = 8
+WIFI_DIRECT_SCAN_TIMEOUT = 10
+LAN_BROADCAST_INTERVAL = 5
+# ===== 软件标识 =====
+SOFTWARE_NAME = "Spider"
+SOFTWARE_VERSION = "1.0.0"
+# ===== 网关（Gateway）自动判定 =====
+# 网关节点默认规则：同时具备「公网接入」和「SDR 硬件」时自动成为网关；
+# 仅具备其中一项时默认不是网关；两项都具备后自动切换为是。
+# 用户可通过 gateway_manual_override 随时手动覆盖（True/False/None=自动）。
+GATEWAY_AUTO = "auto"
+GATEWAY_FORCE_ENABLED = "enabled"
+GATEWAY_FORCE_DISABLED = "disabled"
 # ===== 协议版本 =====
 PROTOCOL_VERSION = 3

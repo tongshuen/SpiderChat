@@ -1,28 +1,8 @@
-# Spider — 端到端加密聊天
-# 客户端和服务器端通用依赖
+# Spider Radio —— Python 依赖
+# 核心逻辑仅依赖标准库，以下均为可选/GUI 依赖：
+#   - customtkinter / tkinter ：图形界面（无显示器环境下可缺失，已做容错）
+#   - SoapySDR                 ：真实 SDR 硬件后端（无硬件时自动降级 Dummy）
+# 安装（可选）：pip install -r requirements.txt
 
-# 核心加密库
-cryptography>=41.0.0
-
-# 密钥环（服务器端机密存储）
-keyring>=24.0.0
-
-# 可选：蓝牙支持（P2P 直连）
-# PyBluez 可能并非在所有平台上都可用
-PyBluez>=0.23; sys_platform != "win32"
-
-# 标准库替代（始终可用）：
-# - socket（TCP/UDP 网络）
-# - json（消息序列化）
-# - hashlib（SHA-256）
-# - base64（编码）
-# - threading（并发）
-# - tkinter（备用 GUI）
-# - uuid（UUIDv1 生成）
-# - os / sys / time / struct / random
-
-# 可选的 DHT 性能提升
-# cffi>=1.15.0
-
-# 开发 / 测试
-# pytest>=7.0.0
+# 运行测试：python test_integration.py
+# 打包：    python pack.py   （生成 ../Spider(radio).txt）

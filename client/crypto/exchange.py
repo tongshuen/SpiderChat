@@ -6,7 +6,7 @@
 import hashlib
 import os
 from shared.crypto_utils import (
-    ecdh_shared_secret, derive_aes_key,
+    ecdh_shared_secret, hkdf_derive,
     load_x25519_private, load_x25519_public
 )
 
@@ -28,7 +28,7 @@ def get_session_key(my_uuid: str, peer_uuid: str,
 
     salt_input = ("|".join(pair)).encode()
     salt = hashlib.sha256(salt_input).digest()
-    key = derive_aes_key(shared, salt=salt)
+    key = hkdf_derive(shared, info=b"spider-session-key-v1", length=32, salt=salt)
     _session_keys[pair] = key
     return key
 

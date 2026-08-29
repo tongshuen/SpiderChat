@@ -389,3 +389,6 @@ class MessageStore:
             for r in rows
         ]
 
+# 注：原始实现已重命名为 _orig_add_message / _orig_get_messages /
+# _orig_search_messages；对外的 add_message / get_messages / search_messages
+# 为保险库 hook 版本，未启用保险库时行为与原实现一致。
