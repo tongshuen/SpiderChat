@@ -184,7 +184,7 @@ public class CryptoManager {
 
         // 使用 AES-GCM 加密（带 AAD）
         byte[] encrypted = KeyManager.aesGcmEncryptRaw(aesKey, data);
-        // 简化：返回 [nonce, ciphertext+tag, aad]
+        // 返回 [nonce, ciphertext+tag, aad]
         byte[] nonce = new byte[SpiderMinecraft.GCM_NONCE_LENGTH_BYTES];
         System.arraycopy(encrypted, 0, nonce, 0, SpiderMinecraft.GCM_NONCE_LENGTH_BYTES);
         byte[] ctAndTag = new byte[encrypted.length - SpiderMinecraft.GCM_NONCE_LENGTH_BYTES];

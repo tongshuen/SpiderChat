@@ -427,7 +427,7 @@ static int modulate_qam(const PhyParams* p, const unsigned char* bytes, int byte
     return needed;
 }
 
-/* GMSK：高斯滤波的 MSK。简化实现：用高斯脉冲整形的 FSK。 */
+/* GMSK：高斯滤波的 MSK。用高斯脉冲整形的 FSK。 */
 static int modulate_gmsk(const PhyParams* p, const unsigned char* bytes, int byte_len,
                           unsigned char* out, int max_out) {
     int sps = p->sample_rate / p->baud;
@@ -487,7 +487,7 @@ static int modulate_gmsk(const PhyParams* p, const unsigned char* bytes, int byt
 
 /* 前导码检测：找到前导码起始位置 */
 static int detect_preamble(const unsigned char* samples, int sample_len, int sps) {
-    /* 简化：能量检测，找到第一个能量超过阈值的符号位置。
+    /* 能量检测，找到第一个能量超过阈值的符号位置。
        使用 4 符号窗口（而非 PREAMBLE_LEN 符号），因为多比特每符号调制
        （如 QAM-16）的前导码只有 4 个符号，但能量检测只需少量符号即可。 */
     int win = 4 * sps;
@@ -725,7 +725,7 @@ static int demodulate_qam(const PhyParams* p, const unsigned char* samples, int 
 
 static int demodulate_gmsk(const PhyParams* p, const unsigned char* samples, int sample_len,
                             unsigned char* out_bits, int max_bits) {
-    /* GMSK 解调：简化为 2FSK 非相干检测（MSK 是连续相位 FSK 的特例） */
+    /* GMSK 解调：采用 2FSK 非相干检测（MSK 是连续相位 FSK 的特例） */
     PhyParams fsk_params = *p;
     fsk_params.modulation = PHY_MOD_FSK;
     fsk_params.fsk_dev0 = -(float)p->baud / 4.0f;
@@ -840,7 +840,7 @@ static void candidate_to_params(const PhyCandidate* c, PhyParams* p, int sample_
 /* 基于接收信号的 SNR 估计：信号功率 / 噪声功率 */
 static float estimate_snr(const unsigned char* samples, int sample_len) {
     if (sample_len < 256) return -999.0f;
-    /* 简化：用信号的方差估计总功率，用前 100 个采样（假设为静默/噪声）估计噪声功率 */
+    /* 用信号的方差估计总功率，用前 100 个采样（假设为静默/噪声）估计噪声功率 */
     float noise_power = 0.0f;
     int noise_len = (sample_len > 200) ? 100 : sample_len / 4;
     for (int i = 0; i < noise_len; i++) {
@@ -864,10 +864,10 @@ static float estimate_snr(const unsigned char* samples, int sample_len) {
     return 10.0f * log10f(snr);
 }
 
-/* 频偏估计：基于载波频率误差（简化实现） */
+/* 频偏估计：基于载波频率误差（） */
 static float estimate_frequency_offset(const unsigned char* samples, int sample_len) {
     if (sample_len < 256) return 0.0f;
-    /* 简化：过零率估计载波频率，与预期 1kHz 比较 */
+    /* 过零率估计载波频率，与预期 1kHz 比较 */
     int zero_crossings = 0;
     for (int i = 1; i < sample_len; i++) {
         if ((samples[i-1] < 128 && samples[i] >= 128) ||

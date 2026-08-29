@@ -92,7 +92,7 @@ Spider 由以下部分组成，共享同一套加密协议与工具库：
 - **Python 服务端**：可运行于任意 Python 环境，包括无显示器（headless）服务器（通过环境变量配置）。
 - **Minecraft 模组**：Minecraft 26.2 + NeoForge，客户端与服务端均支持。
 - **无线电模块**：Linux（推荐），需 SDR 硬件（如 RTL-SDR、HackRF 等）或使用 DummyBackend 开发。
-- 依赖库精简，核心功能仅需 `cryptography`、`keyring`；无线电需 `numpy`、SDR 驱动库；蓝牙需 `PyBluez`（可选）。
+- 核心功能仅需 `cryptography`、`keyring`；无线电需 `numpy`、SDR 驱动库；蓝牙需 `PyBluez`（可选）。
 
 ## 系统架构
 

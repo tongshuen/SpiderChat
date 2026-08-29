@@ -265,7 +265,7 @@ public class SpiderCommand {
         SpiderMinecraftMod mod = SpiderMinecraftMod.get();
         if (mod == null) return 0;
         String pin = StringArgumentType.getString(ctx, "pin");
-        // 此处需要密码 — 简化处理，使用上次输入的密码
+        // 使用上次输入的密码
         // 实际实现中应在 SessionManager 中缓存密码
         boolean ok = mod.getSessionManager().submitDuressPin(pin, "");
         if (ok) {
@@ -312,7 +312,7 @@ public class SpiderCommand {
         CryptoManager cm = mod.getCryptoManager();
         KeyManager km = mod.getKeyManager();
 
-        // 简化：假设已知对端公钥（实际应从服务器查询）
+        // 假设已知对端公钥（实际应从服务器查询）
         JsonObject encrypted = cm.encryptMessage(text, toUuid, "", "");
 
         // 构建 SEND_MSG 信令

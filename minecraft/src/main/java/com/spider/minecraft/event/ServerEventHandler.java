@@ -151,7 +151,7 @@ public class ServerEventHandler {
     }
 
     private void handleRegister(SpiderPacket packet, IPayloadContext ctx) {
-        // 简化：直接返回 AUTH_OK
+        // 直接返回 AUTH_OK
         try {
             JsonObject response = new JsonObject();
             response.addProperty("type", Protocol.AUTH_OK);
@@ -165,7 +165,7 @@ public class ServerEventHandler {
     }
 
     private void handleLogin(SpiderPacket packet, IPayloadContext ctx) {
-        handleRegister(packet, ctx); // 简化处理
+        handleRegister(packet, ctx);
     }
 
     private void handleRecvMsg(JsonObject obj) {

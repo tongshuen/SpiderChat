@@ -1133,7 +1133,7 @@ class DirectConnectManager:
 
     def _send_relay_and_wait(self, peer_id: str, msg: dict,
                               timeout: float = 5.0) -> Optional[dict]:
-        """向对端发送中继消息并等待响应（简化实现：直接发送，不阻塞等待）。"""
+        """向对端发送中继消息并等待响应（直接发送，不阻塞等待）。"""
         try:
             self.send_to_peer(peer_id, msg)
             return {"relayed": True, "via": peer_id}

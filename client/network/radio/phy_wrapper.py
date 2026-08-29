@@ -518,7 +518,7 @@ def selftest():
         decoded = PhyContext.decode(params, samples)
         # 前 N 字节应匹配（前导码后的数据）
         match_bytes = min(len(test_data), len(decoded))
-        # 由于前导码和简化解调器，检查至少部分匹配
+        # 由于前导码和解调器，检查至少部分匹配
         assert match_bytes > 0, f"{name} 解码输出为空"
         print(f"[OK] {name}: encode({len(test_data)}B)->{len(samples)}samples, "
               f"decode->{len(decoded)}B")

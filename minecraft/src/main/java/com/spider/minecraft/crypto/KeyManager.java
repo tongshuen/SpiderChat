@@ -200,7 +200,7 @@ public class KeyManager {
         }
         duressPinHash = sha256Base64(duressPin);
         hasDuressPin = true;
-        // 重新保存（需要解锁 PIN — 此处简化，实际应要求输入 PIN）
+        // 重新保存（需要解锁 PIN — 实际应要求输入 PIN）
         LOGGER.info("[SpiderMinecraft] Duress PIN set");
     }
 

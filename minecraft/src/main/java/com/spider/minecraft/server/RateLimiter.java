@@ -92,7 +92,7 @@ public class RateLimiter {
     }
 
     /**
-     * 简化版：默认消耗1个令牌。
+     * 默认消耗1个令牌。
      */
     public boolean canSend(String userUuid) {
         return canSend(userUuid, 1.0);

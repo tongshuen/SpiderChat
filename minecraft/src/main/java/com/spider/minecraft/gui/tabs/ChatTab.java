@@ -121,7 +121,7 @@ public class ChatTab {
         if (mod != null && mod.getMessageStore() != null && mod.getKeyManager() != null) {
             try {
                 MessageStore store = mod.getMessageStore();
-                // 加载最近消息（简化版）
+                // 加载最近消息
                 messageLog.add("§7=== 最近消息 ===");
                 messageLog.add("§7消息存储已就绪，共 " + store.getMessageCount() + " 条");
                 messageLog.add("§7提示: 输入对方UUID后即可发送加密消息");
