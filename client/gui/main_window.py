@@ -60,7 +60,11 @@ class MainWindow:
         self.uuid = identity["uuid"]
         self.config = load_config()
         self.msg_store = MessageStore()
+        # 死人开关管理器（登录/编辑时自动同步警告消息到服务器）
+        from client.security.deadman import DeadmanManager
+        self.deadman = DeadmanManager(tcp_client=None, get_uuid=lambda: self.uuid)
         self.tcp = TCPClient(server_host, server_port)
+        self.deadman.tcp_client = self.tcp
         # 回调绑定
         self.tcp.on_message = self._on_message
         self.tcp.on_offline_queue = self._on_offline_queue
@@ -71,6 +75,8 @@ class MainWindow:
         self.tcp.on_pubkey_result = self._on_pubkey_result
         self.tcp.on_rate_limited = self._on_rate_limited
         self.tcp.on_compromised_ack = self._on_compromised_ack
+        self.tcp.on_deadman_ack = self._on_deadman_ack
+        self.tcp.on_login_ok = self._on_login_ok
         self.tcp.on_group_message = self._on_group_message
         self.tcp.on_group_event = self._on_group_event
         self.tcp.on_lookup_result = self._on_lookup_result
@@ -887,6 +893,19 @@ class MainWindow:
         msg_type = encrypted.get("type", "text")
         server_msg_id = msg.get("server_msg_id", "")
         client_msg_id = msg.get("client_msg_id", "")
+        # 死人开关警告消息 — 服务器生成的明文系统消息，无需解密
+        if msg.get("deadman_warning"):
+            warning_text = msg.get("system_message", "[死人开关警告]")
+            display_text = f"⚠️ [死人开关警告] {warning_text}"
+            self.msg_store.add_message(
+                from_uuid, "recv", display_text,
+                delivery_status="delivered", server_msg_id=server_msg_id,
+            )
+            if self.current_contact == from_uuid:
+                self._display_text_message(display_text, "recv", msg_id=server_msg_id)
+                self.root.after(100, self._check_visible_messages)
+            print(f"[DEADMAN] 收到来自 {from_uuid[:16]}... 的死人开关警告消息")
+            return
         if from_uuid not in self.contact_pubkeys:
             self._fetch_peer_pubkey(from_uuid)
         if from_uuid not in self.contact_pubkeys:
@@ -1117,6 +1136,22 @@ class MainWindow:
         self.root.quit()
         sys.exit(0)
 
+    def _on_deadman_ack(self, msg: dict):
+        """服务器确认已存储死人开关警告消息。"""
+        stored = msg.get("stored", False)
+        if stored:
+            print("[DEADMAN] 服务器确认：警告消息已存储")
+        else:
+            print("[DEADMAN] 服务器存储警告消息失败")
+
+    def _on_login_ok(self, msg: dict):
+        """登录成功后，自动同步死人开关警告消息到服务器（如果已启用）。"""
+        print("[DEADMAN] 登录成功，检查死人开关配置...")
+        if self.deadman.is_enabled() and self.deadman.is_config_complete():
+            self.deadman.sync_to_server()
+        elif self.deadman.is_enabled():
+            print("[DEADMAN] 死人开关已启用但配置不完整，请在设置中配置警告消息和收件人")
+
     def _on_lookup_result(self, msg: dict):
         results = msg.get("results", [])
         query = msg.get("query", "")
@@ -1257,7 +1292,7 @@ class MainWindow:
     def _open_settings(self):
         win = ctk.CTkToplevel(self.root)
         win.title("设置")
-        win.geometry("420x500")
+        win.geometry("420x680")
         ctk.CTkLabel(win, text="发送消息颜色 (HEX):").pack(pady=(10, 0))
         sent_color = ctk.CTkEntry(win, placeholder_text=self.config.get("sent_message_color", DEFAULT_SENT_COLOR))
         sent_color.pack(pady=2)
@@ -1276,6 +1311,31 @@ class MainWindow:
         ctk.CTkLabel(win, text="── 隐私 ──", font=("Arial", 12, "bold")).pack(pady=(10, 5))
         read_rcpt_var = ctk.BooleanVar(value=self.read_receipts_enabled)
         ctk.CTkCheckBox(win, text="发送已读回执（关闭后不会通知对方你已读消息）", variable=read_rcpt_var).pack(pady=5, padx=10, anchor="w")
+
+        # ===== 死人开关 =====
+        ctk.CTkLabel(win, text="── 死人开关 ──", font=("Arial", 12, "bold")).pack(pady=(15, 5))
+        deadman_cfg = self.deadman.get_config()
+        deadman_enabled_var = ctk.BooleanVar(value=deadman_cfg["enabled"])
+        ctk.CTkCheckBox(win, text="启用死人开关（长期未登录时自动发送警告消息）",
+                         variable=deadman_enabled_var).pack(pady=2, padx=10, anchor="w")
+        ctk.CTkLabel(win, text="警告消息内容：").pack(anchor="w", padx=10, pady=(5, 0))
+        deadman_msg_entry = ctk.CTkEntry(win, placeholder_text="输入要发送的警告消息")
+        deadman_msg_entry.pack(fill="x", padx=10, pady=2)
+        if deadman_cfg["warning_message"]:
+            deadman_msg_entry.insert(0, deadman_cfg["warning_message"])
+        ctk.CTkLabel(win, text="预定收件人 UUID：").pack(anchor="w", padx=10, pady=(5, 0))
+        deadman_recipient_entry = ctk.CTkEntry(win, placeholder_text="输入收件人 UUID")
+        deadman_recipient_entry.pack(fill="x", padx=10, pady=2)
+        if deadman_cfg["recipient_uuid"]:
+            deadman_recipient_entry.insert(0, deadman_cfg["recipient_uuid"])
+        grace_row = ctk.CTkFrame(win)
+        grace_row.pack(fill="x", padx=10, pady=5)
+        ctk.CTkLabel(grace_row, text="宽限期（天）：").pack(side="left")
+        deadman_grace_entry = ctk.CTkEntry(grace_row, width=80)
+        deadman_grace_entry.pack(side="left", padx=5)
+        deadman_grace_entry.insert(0, str(deadman_cfg["grace_days"]))
+        ctk.CTkLabel(win, text="超过宽限期未登录，服务器将先把警告消息发给收件人，再执行胁迫操作。",
+                     font=("Arial", 9), text_color="gray").pack(padx=10, pady=2)
 
         ctk.CTkLabel(win, text="── 个人资料 ──", font=("Arial", 12, "bold")).pack(pady=(15, 5))
         current_name = get_display_name()
@@ -1303,6 +1363,20 @@ class MainWindow:
             self.config["auto_download_files"] = auto_dl.get()
             self.read_receipts_enabled = read_rcpt_var.get()
             self.config["read_receipts_enabled"] = self.read_receipts_enabled
+            # 死人开关配置
+            grace_days = 7
+            try:
+                grace_days = int(deadman_grace_entry.get() or "7")
+            except ValueError:
+                grace_days = 7
+            self.deadman.set_config(
+                enabled=deadman_enabled_var.get(),
+                warning_message=deadman_msg_entry.get().strip(),
+                recipient_uuid=deadman_recipient_entry.get().strip(),
+                grace_days=grace_days,
+                auto_sync=True,
+            )
+            self.config = load_config()  # 重新加载以包含 deadman 配置
             save_config(self.config)
             self._show_info("设置已保存")
             win.destroy()

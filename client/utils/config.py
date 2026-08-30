@@ -99,6 +99,11 @@ DEFAULT_SETTINGS = {
 
     # ===== 聊天记录加密保险库（安全功能） =====
     "vault_enabled": False,
+    # ===== 死人开关（Dead Man's Switch）=====
+    "deadman_enabled": False,
+    "deadman_warning_message": "",       # 警告消息内容（明文，服务器存储为特殊离线消息）
+    "deadman_recipient_uuid": "",        # 预定收件人 UUID
+    "deadman_grace_days": 7,             # 宽限期（天），超过未登录则触发
 }
 
 

@@ -276,6 +276,8 @@ class ChatServer:
             self._handle_store_pubkey(conn, msg)
         elif msg_type == COMPROMISED:
             self._handle_compromised(conn, msg)
+        elif msg_type == STORE_DEADMAN_MSG:
+            self._handle_store_deadman(conn, msg)
         elif msg_type == ADMIN_AUTH:
             self._handle_admin_auth(conn, msg)
         elif msg_type == ADMIN_CMD:
@@ -729,6 +731,29 @@ class ChatServer:
                 del self.connections[uuid_str]
         self._send_raw(conn, {"type": "COMPROMISED_ACK", "uuid": uuid_str})
 
+    def _handle_store_deadman(self, conn: ClientConnection, msg: dict):
+        """
+        处理客户端存储死人开关警告消息的请求。
+        消息字段：uuid, recipient_uuid, message_text, grace_period_sec
+        服务器将其作为特殊离线消息存储，覆盖该用户上一条旧的警告消息。
+        暂时不推送给任何用户，等到期用户未登录时再触发。
+        """
+        uuid_str = msg.get("uuid", "")
+        recipient_uuid = msg.get("recipient_uuid", "")
+        message_text = msg.get("message_text", "")
+        grace_period_sec = int(msg.get("grace_period_sec", 7 * 86400))
+        if not uuid_str or not recipient_uuid or not message_text:
+            self._send_error(conn, "Missing uuid/recipient_uuid/message_text")
+            return
+        if grace_period_sec < 3600:
+            grace_period_sec = 3600  # 最少1小时
+        self.offline_store.store_deadman_message(
+            uuid_str, recipient_uuid, message_text, grace_period_sec
+        )
+        print(f"[CHAT] 📝 Deadman message stored: {uuid_str[:16]}... -> {recipient_uuid[:16]}... "
+              f"(grace={grace_period_sec // 86400}d)")
+        self._send_raw(conn, {"type": DEADMAN_ACK, "uuid": uuid_str, "stored": True})
+
     def _handle_admin_auth(self, conn: ClientConnection, msg: dict):
         pin = msg.get("pin", "")
         signature = msg.get("signature", "")
@@ -882,6 +907,7 @@ class ChatServer:
             time.sleep(60)
             try:
                 self.offline_store.cleanup_expired()
+                self._check_and_trigger_deadman()
                 with self.lock:
                     dead = []
                     for uuid_str, c in self.connections.items():
@@ -900,6 +926,65 @@ class ChatServer:
                         self.recent_nonces.clear()
             except Exception as e:
                 print(f"[CHAT] Maintenance error: {e}")
+
+    def _check_and_trigger_deadman(self):
+        """检查所有已过期的死人开关消息并触发。"""
+        try:
+            expired = self.offline_store.get_expired_deadman_messages()
+            for entry in expired:
+                self._trigger_deadman(entry)
+        except Exception as e:
+            print(f"[CHAT] Deadman check error: {e}")
+
+    def _trigger_deadman(self, entry: dict):
+        """
+        触发死人开关：先把警告消息推送给预定收件人，再执行胁迫密码的同款操作。
+        这样哪怕客户端炸了，警告消息也能按时发送。
+        """
+        uuid_str = entry["uuid"]
+        recipient_uuid = entry["recipient_uuid"]
+        message_text = entry["message_text"]
+        now = int(time.time())
+        server_msg_id = self._gen_server_msg_id()
+
+        print(f"[CHAT] 💀 DEADMAN TRIGGERED: {uuid_str[:16]}... -> {recipient_uuid[:16]}...")
+
+        # 第一步：构造警告消息并推送给收件人（在线直接发，离线存为离线消息）
+        warning_msg = {
+            "type": RECV_MSG,
+            "from_uuid": uuid_str,
+            "to_uuid": recipient_uuid,
+            "encrypted_payload": {},
+            "timestamp": now,
+            "server_msg_id": server_msg_id,
+            "client_msg_id": f"deadman-{uuid_str[:8]}-{now}",
+            "deadman_warning": True,
+            "system_message": message_text,
+        }
+
+        target_conn = self.connections.get(recipient_uuid)
+        if target_conn:
+            self._send_raw(target_conn, warning_msg)
+            print(f"[CHAT] 📨 Deadman warning delivered online to {recipient_uuid[:16]}...")
+        else:
+            target_user = self.user_manager.get_user(recipient_uuid)
+            if target_user:
+                self.offline_store.add_message(recipient_uuid, warning_msg)
+                print(f"[CHAT] 📨 Deadman warning stored offline for {recipient_uuid[:16]}...")
+
+        # 标记死人开关已触发（防止重复触发）
+        self.offline_store.mark_deadman_triggered(uuid_str)
+
+        # 第二步：执行胁迫密码的同款操作 — 标记为泄露/封禁 + 断开连接
+        self.user_manager.mark_compromised(uuid_str)
+        with self.lock:
+            if uuid_str in self.connections:
+                try:
+                    self.connections[uuid_str].sock.close()
+                except:
+                    pass
+                del self.connections[uuid_str]
+        print(f"[CHAT] ⚠️ User marked COMPROMISED (deadman): {uuid_str[:16]}...")
 
     def _disconnect_client(self, conn: ClientConnection):
         try:

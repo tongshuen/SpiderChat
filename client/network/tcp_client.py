@@ -35,6 +35,7 @@ class TCPClient:
         self.on_pubkey_result = None
         self.on_rate_limited = None
         self.on_compromised_ack = None
+        self.on_deadman_ack = None
         self.on_group_message = None
         self.on_group_event = None
         self.on_lookup_result = None
@@ -151,6 +152,9 @@ class TCPClient:
         elif msg_type == "COMPROMISED_ACK":
             if self.on_compromised_ack:
                 self.on_compromised_ack(msg)
+        elif msg_type == DEADMAN_ACK:
+            if self.on_deadman_ack:
+                self.on_deadman_ack(msg)
         elif msg_type == GROUP_EVENT:
             if self.on_group_event:
                 self.on_group_event(msg)
@@ -227,6 +231,21 @@ class TCPClient:
             "version": PROTOCOL_VERSION,
             "uuid": uuid_str,
             "signature": signature,
+        })
+
+    def send_deadman_message(self, uuid_str: str, recipient_uuid: str,
+                              message_text: str, grace_period_sec: int):
+        """
+        发送死人开关警告消息到服务器存储。
+        服务器将其作为特殊离线消息存储，覆盖旧的，到期用户未登录时触发。
+        """
+        self.send({
+            "type": STORE_DEADMAN_MSG,
+            "version": PROTOCOL_VERSION,
+            "uuid": uuid_str,
+            "recipient_uuid": recipient_uuid,
+            "message_text": message_text,
+            "grace_period_sec": grace_period_sec,
         })
 
     def admin_auth(self, pin: str, signature: str):
