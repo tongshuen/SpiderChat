@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Spider</string>
+    <string name="login_title">Spider 登录</string>
+    <string name="server_address">服务器地址</string>
+    <string name="server_port">端口</string>
+    <string name="unlock_pin">解锁 PIN（6位数字）</string>
+    <string name="duress_pin">胁迫 PIN（6位数字，仅注册时）</string>
+    <string name="display_name">显示名称</string>
+    <string name="login">登录</string>
+    <string name="register">注册</string>
+    <string name="chat">聊天</string>
+    <string name="contacts">联系人</string>
+    <string name="settings">设置</string>
+    <string name="send">发送</string>
+    <string name="add_contact">添加联系人</string>
+    <string name="search">搜索</string>
+    <string name="deadman_switch">死人开关</string>
+    <string name="enable_deadman">启用死人开关</string>
+    <string name="warning_message">警告消息内容</string>
+    <string name="recipient_uuid">预定收件人 UUID</string>
+    <string name="grace_days">宽限期（天）</string>
+    <string name="duress_pin_settings">胁迫 PIN</string>
+    <string name="change_duress_pin">修改胁迫 PIN</string>
+    <string name="wipe_data">擦除所有数据</string>
+    <string name="auto_download">自动下载文件</string>
+    <string name="read_receipts">已读回执</string>
+    <string name="save">保存</string>
+    <string name="cancel">取消</string>
+    <string name="no_messages">暂无消息</string>
+    <string name="no_contacts">暂无联系人</string>
+    <string name="enter_uuid">输入对方 UUID</string>
+    <string name="enter_message">输入消息...</string>
+    <string name="connecting">连接中...</string>
+    <string name="connected">已连接</string>
+    <string name="disconnected">已断开</string>
+    <string name="login_failed">登录失败</string>
+    <string name="registration_failed">注册失败</string>
+    <string name="invalid_pin">PIN 必须为6位数字</string>
+    <string name="deadman_warning_received">收到死人开关警告消息</string>
+</resources>

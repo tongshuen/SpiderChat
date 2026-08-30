@@ -876,9 +876,6 @@ class MainWindow:
                 self._update_receipt_display(item["msg_id"], "read")
         self._show_info(f"已标记 {count} 条消息为已读")
 
-    def _send_read_receipts_for_visible(self, contact_uuid: str):
-        pass
-
     def _send_read_receipt(self, from_uuid: str, server_msg_id: str):
         try:
             receipt = {
