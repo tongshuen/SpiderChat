@@ -1448,8 +1448,9 @@ gradle wrapper
 
 ## 注意事项
 
-- 本版本为审查版，部分功能（群组聊天、语音通话）尚未实现
 - 死人开关功能需要服务端支持 `STORE_DEADMAN_MSG` 协议（Spider 服务端 v2.0+）
+- 死人开关启用后将请求定位权限，警告消息会自动附加经纬度、精度和定位时间
+- 聊天消息长按可查看消息中包含的位置信息（如有）
 - 首次使用需注册新身份，无法导入 Python 客户端的身份文件
 - 胁迫 PIN 触发后本地数据将被不可逆擦除，请谨慎设置
 
@@ -1470,6 +1471,8 @@ android/app/src/main/AndroidManifest.xml:
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -2289,6 +2292,210 @@ class FileTransferManager(
 }
 
 ================================================================================
+android/app/src/main/java/com/spider/android/location/LocationHelper.kt:
+package com.spider.android.location
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationManager
+import android.os.Build
+import android.os.SystemClock
+import android.util.Log
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * 位置信息助手 — 获取当前经纬度、不确定度（精度）和定位时间。
+ *
+ * 用于死人开关警告消息中自动附加位置信息，
+ * 以及聊天消息长按显示位置详情。
+ */
+class LocationHelper(private val context: Context) {
+
+    private val TAG = "LocationHelper"
+
+    data class LocationInfo(
+        val latitude: Double,
+        val longitude: Double,
+        val accuracy: Float,         // 不确定度（米），-1 表示不可用
+        val timestamp: Long,         // 定位时间（Unix 秒）
+        val provider: String         // 定位提供者（gps/network/passive）
+    ) {
+        /** 格式化为人类可读字符串，附加到警告消息中。 */
+        fun toWarningString(): String {
+            val timeStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                .format(Date(timestamp * 1000))
+            val accStr = if (accuracy >= 0) "±%.0f米".format(accuracy) else "未知"
+            return buildString {
+                appendLine()
+                appendLine("── 位置信息（自动附加）──")
+                appendLine("纬度：%.6f".format(latitude))
+                appendLine("经度：%.6f".format(longitude))
+                appendLine("精度：$accStr")
+                append("定位时间：$timeStr")
+            }
+        }
+
+        /** 格式化为简短字符串，用于长按弹窗。 */
+        fun toShortString(): String {
+            val timeStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                .format(Date(timestamp * 1000))
+            val accStr = if (accuracy >= 0) "±%.0f米".format(accuracy) else "未知"
+            return "纬度：%.6f\n经度：%.6f\n精度：%s\n定位时间：%s".format(
+                latitude, longitude, accStr, timeStr
+            )
+        }
+    }
+
+    /**
+     * 检查是否已授予定位权限。
+     */
+    fun hasPermission(): Boolean {
+        val fine = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+        val coarse = context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+        return fine == PackageManager.PERMISSION_GRANTED ||
+                coarse == PackageManager.PERMISSION_GRANTED
+    }
+
+    /**
+     * 获取当前位置。
+     * 优先使用 GPS，其次网络定位，最后使用最后已知位置。
+     *
+     * @return LocationInfo 或 null（无权限或无法获取位置）
+     */
+    @SuppressLint("MissingPermission")
+    fun getCurrentLocation(): LocationInfo? {
+        if (!hasPermission()) {
+            Log.w(TAG, "No location permission")
+            return null
+        }
+
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+
+        // 尝试从各个提供者获取最后已知位置
+        val providers = listOf(
+            LocationManager.GPS_PROVIDER,
+            LocationManager.NETWORK_PROVIDER,
+            LocationManager.PASSIVE_PROVIDER
+        )
+
+        var bestLocation: Location? = null
+        var bestProvider = ""
+
+        for (provider in providers) {
+            try {
+                if (!locationManager.isProviderEnabled(provider)) continue
+                val loc = locationManager.getLastKnownLocation(provider) ?: continue
+                // 选择时间最近、精度最高的位置
+                if (bestLocation == null || isBetterLocation(loc, bestLocation)) {
+                    bestLocation = loc
+                    bestProvider = provider
+                }
+            } catch (e: SecurityException) {
+                Log.w(TAG, "SecurityException for provider $provider: ${e.message}")
+            } catch (e: Exception) {
+                Log.w(TAG, "Error getting location from $provider: ${e.message}")
+            }
+        }
+
+        if (bestLocation == null) {
+            Log.w(TAG, "No location available from any provider")
+            return null
+        }
+
+        // 计算定位时间（Unix 秒）
+        val locationTime = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            // elapsedRealtimeNanos 更准确
+            val elapsedDelta = (SystemClock.elapsedRealtimeNanos() - bestLocation.elapsedRealtimeNanos) / 1_000_000_000L
+            (System.currentTimeMillis() / 1000) - elapsedDelta
+        } else {
+            bestLocation.time / 1000
+        }
+
+        return LocationInfo(
+            latitude = bestLocation.latitude,
+            longitude = bestLocation.longitude,
+            accuracy = if (bestLocation.hasAccuracy()) bestLocation.accuracy else -1f,
+            timestamp = locationTime,
+            provider = bestProvider
+        )
+    }
+
+    /**
+     * 判断新位置是否比旧位置更好。
+     */
+    private fun isBetterLocation(newLocation: Location, currentBest: Location): Boolean {
+        val timeDelta = newLocation.time - currentBest.time
+        val isNewer = timeDelta > 0
+        val isMuchNewer = timeDelta > 2 * 60 * 1000 // 2分钟
+        val isMuchOlder = timeDelta < -2 * 60 * 1000
+
+        if (isMuchNewer) return true
+        if (isMuchOlder) return false
+
+        val accuracyDelta = (newLocation.accuracy - currentBest.accuracy).toInt()
+        val isLessAccurate = accuracyDelta > 0
+        val isMoreAccurate = accuracyDelta < 0
+        val isMuchLessAccurate = accuracyDelta > 200
+
+        val isFromSameProvider = newLocation.provider == currentBest.provider
+
+        return when {
+            isMoreAccurate -> true
+            isNewer && !isLessAccurate -> true
+            isNewer && !isMuchLessAccurate && isFromSameProvider -> true
+            else -> false
+        }
+    }
+
+    companion object {
+        /**
+         * 从消息文本中解析位置信息。
+         * 匹配死人开关警告消息中自动附加的位置格式。
+         *
+         * @return LocationInfo 或 null（消息中无位置信息）
+         */
+        fun parseFromMessage(text: String): LocationInfo? {
+            try {
+                val latMatch = Regex("纬度[：:]\\s*([-+]?\\d+\\.?\\d*)").find(text)
+                val lonMatch = Regex("经度[：:]\\s*([-+]?\\d+\\.?\\d*)").find(text)
+                val accMatch = Regex("精度[：:]\\s*±?(\\d+\\.?\\d*)米?").find(text)
+                val timeMatch = Regex("定位时间[：:]\\s*(\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2})").find(text)
+
+                if (latMatch == null || lonMatch == null) return null
+
+                val latitude = latMatch.groupValues[1].toDouble()
+                val longitude = lonMatch.groupValues[1].toDouble()
+                val accuracy = accMatch?.groupValues?.get(1)?.toFloatOrNull() ?: -1f
+
+                val timestamp = timeMatch?.groupValues?.get(1)?.let {
+                    try {
+                        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                            .parse(it)?.time?.div(1000) ?: System.currentTimeMillis() / 1000
+                    } catch (e: Exception) {
+                        System.currentTimeMillis() / 1000
+                    }
+                } ?: System.currentTimeMillis() / 1000
+
+                return LocationInfo(
+                    latitude = latitude,
+                    longitude = longitude,
+                    accuracy = accuracy,
+                    timestamp = timestamp,
+                    provider = "parsed"
+                )
+            } catch (e: Exception) {
+                return null
+            }
+        }
+    }
+}
+
+================================================================================
 android/app/src/main/java/com/spider/android/model/Contact.kt:
 package com.spider.android.model
 
@@ -2791,6 +2998,7 @@ package com.spider.android.security
 import android.content.Context
 import android.util.Log
 import com.spider.android.crypto.KeyManager
+import com.spider.android.location.LocationHelper
 import com.spider.android.network.Protocol
 import com.spider.android.network.SpiderClient
 
@@ -2807,7 +3015,8 @@ import com.spider.android.network.SpiderClient
 class DeadmanManager(
     private val context: Context,
     private val keyManager: KeyManager,
-    private val spiderClient: SpiderClient
+    private val spiderClient: SpiderClient,
+    private val locationHelper: LocationHelper = LocationHelper(context)
 ) {
 
     private val TAG = "DeadmanManager"
@@ -2896,10 +3105,29 @@ class DeadmanManager(
         }
 
         val gracePeriodSec = cfg.graceDays * 86400
+
+        // 自动附加当前位置信息（经纬度、不确定度、定位时间）
+        // 这样哪怕客户端炸了，警告消息也能携带最后已知位置
+        val messageWithLocation = buildString {
+            append(cfg.warningMessage)
+            if (locationHelper.hasPermission()) {
+                val loc = locationHelper.getCurrentLocation()
+                if (loc != null) {
+                    append(loc.toWarningString())
+                    Log.i(TAG, "Location appended to deadman warning: " +
+                            "lat=%.4f lon=%.4f acc=%.1fm".format(loc.latitude, loc.longitude, loc.accuracy))
+                } else {
+                    Log.w(TAG, "Location permission granted but unable to get location")
+                }
+            } else {
+                Log.d(TAG, "No location permission, sending warning without location")
+            }
+        }
+
         spiderClient.sendDeadmanMessage(
             uuid = uuid,
             recipientUuid = cfg.recipientUuid,
-            messageText = cfg.warningMessage,
+            messageText = messageWithLocation,
             gracePeriodSec = gracePeriodSec
         )
         Log.i(TAG, "Deadman warning synced to server " +
@@ -4801,16 +5029,19 @@ class MainActivity : AppCompatActivity() {
 android/app/src/main/java/com/spider/android/ui/main/MessageAdapter.kt:
 package com.spider.android.ui.main
 
+import android.app.AlertDialog
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.spider.android.R
+import com.spider.android.location.LocationHelper
 import com.spider.android.model.Message
 
 /**
  * 消息列表适配器 — 支持发送/接收两种布局。
+ * 长按消息气泡可显示位置详情（如果消息中包含经纬度信息）。
  */
 class MessageAdapter(
     private val messages: MutableList<Message>,
@@ -4825,11 +5056,13 @@ class MessageAdapter(
     inner class SentViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val tvText: TextView = view.findViewById(R.id.tvText)
         val tvTime: TextView = view.findViewById(R.id.tvTime)
+        val messageBubble: View = view.findViewById(R.id.messageBubble)
     }
 
     inner class ReceivedViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val tvText: TextView = view.findViewById(R.id.tvText)
         val tvTime: TextView = view.findViewById(R.id.tvTime)
+        val messageBubble: View = view.findViewById(R.id.messageBubble)
     }
 
     override fun getItemViewType(position: Int): Int {
@@ -4854,10 +5087,31 @@ class MessageAdapter(
             is SentViewHolder -> {
                 holder.tvText.text = message.text
                 holder.tvTime.text = message.timeString
+                setupLongClick(holder.messageBubble, message)
             }
             is ReceivedViewHolder -> {
                 holder.tvText.text = message.text
                 holder.tvTime.text = message.timeString
+                setupLongClick(holder.messageBubble, message)
+            }
+        }
+    }
+
+    /**
+     * 设置长按监听器：如果消息中包含位置信息，长按弹出位置详情。
+     */
+    private fun setupLongClick(view: View, message: Message) {
+        view.setOnLongClickListener {
+            val location = LocationHelper.parseFromMessage(message.text)
+            if (location != null) {
+                AlertDialog.Builder(view.context)
+                    .setTitle("位置信息")
+                    .setMessage(location.toShortString())
+                    .setPositiveButton("关闭", null)
+                    .show()
+                true
+            } else {
+                false
             }
         }
     }
@@ -4880,7 +5134,9 @@ class MessageAdapter(
 android/app/src/main/java/com/spider/android/ui/settings/SettingsActivity.kt:
 package com.spider.android.ui.settings
 
+import android.Manifest
 import android.app.AlertDialog
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Button
 import android.widget.EditText
@@ -4888,6 +5144,8 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.spider.android.R
 import com.spider.android.SpiderApp
 
@@ -4895,6 +5153,20 @@ import com.spider.android.SpiderApp
  * 设置界面 — 死人开关、胁迫 PIN、通用设置。
  */
 class SettingsActivity : AppCompatActivity() {
+
+    companion object {
+        private const val REQUEST_LOCATION_PERMISSION = 1001
+
+        /**
+         * 默认警告文本 — 对齐 Minecraft 版的简洁安全警告风格，
+         * 但更贴合 Android 实际（提及自动定位、手机端等）。
+         */
+        const val DEFAULT_WARNING_MESSAGE =
+            "⚠️ 死人开关自动警告：本机用户可能已遭遇不测。\n" +
+            "本消息由 Spider Android 客户端在长期未登录后自动触发。\n" +
+            "最后已知位置（经纬度、精度、定位时间）已自动附加在下方。\n" +
+            "请尽快联系本人或向当地警方求助。"
+    }
 
     private val app by lazy { application as SpiderApp }
 
@@ -4904,6 +5176,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var etRecipientUuid: EditText
     private lateinit var etGraceDays: EditText
     private lateinit var btnSaveDeadman: Button
+    private lateinit var btnUseDefaultWarning: Button
     private lateinit var tvDeadmanStatus: TextView
 
     // 胁迫 PIN
@@ -4917,7 +5190,6 @@ class SettingsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
-
         initViews()
         loadSettings()
         setupListeners()
@@ -4929,6 +5201,7 @@ class SettingsActivity : AppCompatActivity() {
         etRecipientUuid = findViewById(R.id.etRecipientUuid)
         etGraceDays = findViewById(R.id.etGraceDays)
         btnSaveDeadman = findViewById(R.id.btnSaveDeadman)
+        btnUseDefaultWarning = findViewById(R.id.btnUseDefaultWarning)
         tvDeadmanStatus = findViewById(R.id.tvDeadmanStatus)
         btnChangeDuress = findViewById(R.id.btnChangeDuress)
         tvDuressStatus = findViewById(R.id.tvDuressStatus)
@@ -4958,10 +5231,20 @@ class SettingsActivity : AppCompatActivity() {
     private fun setupListeners() {
         btnSaveDeadman.setOnClickListener { saveDeadmanSettings() }
 
+        btnUseDefaultWarning.setOnClickListener {
+            etWarningMessage.setText(DEFAULT_WARNING_MESSAGE)
+            Toast.makeText(this, "已填入默认警告文本", Toast.LENGTH_SHORT).show()
+        }
+
         swDeadman.setOnCheckedChangeListener { _, isChecked ->
             etWarningMessage.isEnabled = isChecked
             etRecipientUuid.isEnabled = isChecked
             etGraceDays.isEnabled = isChecked
+            btnUseDefaultWarning.isEnabled = isChecked
+            // 启用死人开关时请求定位权限（用于自动附加位置）
+            if (isChecked) {
+                requestLocationPermissionIfNeeded()
+            }
         }
 
         btnChangeDuress.setOnClickListener { showChangeDuressDialog() }
@@ -4970,10 +5253,58 @@ class SettingsActivity : AppCompatActivity() {
             getSharedPreferences("spider_settings", MODE_PRIVATE)
                 .edit().putBoolean("auto_download", isChecked).apply()
         }
-
         swReadReceipts.setOnCheckedChangeListener { _, isChecked ->
             getSharedPreferences("spider_settings", MODE_PRIVATE)
                 .edit().putBoolean("read_receipts", isChecked).apply()
+        }
+    }
+
+    /**
+     * 请求定位权限（如果尚未授予）。
+     * 死人开关启用时需要定位权限，以便在警告消息中自动附加经纬度。
+     */
+    private fun requestLocationPermissionIfNeeded() {
+        val hasFine = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasFine && !hasCoarse) {
+            AlertDialog.Builder(this)
+                .setTitle("需要定位权限")
+                .setMessage("死人开关启用后，警告消息将自动附加当前经纬度、精度和定位时间，" +
+                        "以便收件人了解您的最后已知位置。是否授予定位权限？")
+                .setPositiveButton("授予") { _, _ ->
+                    ActivityCompat.requestPermissions(
+                        this,
+                        arrayOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                        ),
+                        REQUEST_LOCATION_PERMISSION
+                    )
+                }
+                .setNegativeButton("暂不", null)
+                .show()
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_LOCATION_PERMISSION) {
+            val granted = grantResults.isNotEmpty() &&
+                    grantResults[0] == PackageManager.PERMISSION_GRANTED
+            if (granted) {
+                Toast.makeText(this, "定位权限已授予，警告消息将自动附加位置", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "未授予定位权限，警告消息将不包含位置信息", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -5001,7 +5332,6 @@ class SettingsActivity : AppCompatActivity() {
             graceDays = graceDays,
             autoSync = true
         )
-
         updateDeadmanStatus()
         Toast.makeText(this, "死人开关设置已保存", Toast.LENGTH_SHORT).show()
     }
@@ -5041,9 +5371,7 @@ class SettingsActivity : AppCompatActivity() {
                     Toast.makeText(this, "两次输入的 PIN 不一致", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
-
                 if (app.duressManager.setDuressPin(newPin)) {
-                    // 保存到身份存储
                     tvDuressStatus.text = "胁迫 PIN：已设置"
                     Toast.makeText(this, "胁迫 PIN 已设置", Toast.LENGTH_SHORT).show()
                 } else {
@@ -5338,6 +5666,15 @@ android/app/src/main/res/layout/activity_settings.xml:
                 android:minLines="2"
                 android:textColor="@color/white" />
         </com.google.android.material.textfield.TextInputLayout>
+        <Button
+            android:id="@+id/btnUseDefaultWarning"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="使用默认警告文本"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:textColor="@color/spider_primary"
+            android:layout_marginBottom="8dp"
+            android:layout_gravity="end" />
 
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
@@ -5706,6 +6043,7 @@ android/app/src/main/res/layout/item_message_received.xml:
     android:layout_marginEnd="48dp">
 
     <LinearLayout
+        android:id="@+id/messageBubble"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="vertical"
@@ -5744,6 +6082,7 @@ android/app/src/main/res/layout/item_message_sent.xml:
     android:layout_marginStart="48dp">
 
     <LinearLayout
+        android:id="@+id/messageBubble"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="vertical"
