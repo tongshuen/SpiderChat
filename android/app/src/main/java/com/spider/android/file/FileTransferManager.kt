@@ -67,6 +67,7 @@ class FileTransferManager(
             // 加密文件数据
             val encrypted = cryptoManager.encryptMessage(
                 Base64.encodeToString(fileData, Base64.NO_WRAP),
+                contactUuid,
                 contactX25519Pub,
                 keyManager.getIdentity()?.ed25519Private ?: ""
             )
@@ -84,7 +85,7 @@ class FileTransferManager(
                 put("ciphertext", encrypted.ciphertext)
                 put("nonce", encrypted.nonce)
                 put("tag", encrypted.tag)
-                put("ephemeral_pubkey", encrypted.ephemeralPubKey)
+                put("ephemeral_pub", encrypted.ephemeralPubKey)
                 put("aad", encrypted.aad)
             }
 
@@ -120,7 +121,7 @@ class FileTransferManager(
                 ciphertext = encryptedPayload.optString("ciphertext"),
                 nonce = encryptedPayload.optString("nonce"),
                 tag = encryptedPayload.optString("tag"),
-                ephemeralPubKey = encryptedPayload.optString("ephemeral_pubkey"),
+                ephemeralPubKey = encryptedPayload.optString("ephemeral_pub", encryptedPayload.optString("ephemeral_pubkey")),
                 aad = encryptedPayload.optString("aad")
             )
 

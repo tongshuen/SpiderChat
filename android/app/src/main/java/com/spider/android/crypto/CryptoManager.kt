@@ -10,16 +10,17 @@ import org.bouncycastle.crypto.params.X25519PublicKeyParameters
 import org.bouncycastle.crypto.signers.Ed25519Signer
 import java.security.SecureRandom
 import javax.crypto.Cipher
+import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * 消息加密管理器 — X25519 ECDH + AES-256-GCM + Ed25519 签名。
+ * 消息加密管理器 — X25519 ECDH + HKDF-SHA256 + AES-256-GCM + Ed25519 签名。
  *
- * 对齐 Spider Python 客户端的加密流程：
+ * 完全对齐 Spider Python 客户端和 Minecraft 模组的加密流程：
  * 1. 发送方用临时 X25519 私钥 + 接收方 X25519 公钥做 ECDH
- * 2. HKDF 派生 AES-256-GCM 会话密钥
- * 3. 加密消息（含 AAD：发送者、接收者、时间戳、协议版本）
+ * 2. 标准 HKDF-SHA256 派生 AES-256-GCM 会话密钥（info="spider-msg-ephemeral-v1"）
+ * 3. 加密消息（AAD = JSON {"from","to","ts","proto"}，键排序对齐 Python sort_keys=True）
  * 4. 发送方用 Ed25519 私钥签名
  */
 class CryptoManager(private val keyManager: KeyManager) {
@@ -36,14 +37,20 @@ class CryptoManager(private val keyManager: KeyManager) {
 
     /**
      * 加密消息。
+     *
+     * @param plaintext 明文
+     * @param recipientUuid 接收方 UUID（用于 AAD）
+     * @param recipientX25519Pub 接收方 X25519 公钥（Base64）
+     * @param senderEd25519Priv 发送方 Ed25519 私钥（Base64）
      */
     fun encryptMessage(
         plaintext: String,
+        recipientUuid: String,
         recipientX25519Pub: String,
         senderEd25519Priv: String
     ): EncryptedMessage? {
         return try {
-            // 1. 生成临时 X25519 密钥对
+            // 1. 生成临时 X25519 密钥对（前向保密）
             val ephemeralKeyPair = keyManager.generateX25519KeyPair()
             val ephemeralPriv = ephemeralKeyPair.second
             val ephemeralPub = ephemeralKeyPair.first
@@ -51,16 +58,21 @@ class CryptoManager(private val keyManager: KeyManager) {
             // 2. ECDH 密钥协商
             val sharedSecret = computeSharedSecret(ephemeralPriv, recipientX25519Pub)
 
-            // 3. HKDF 派生会话密钥（简化版：直接 SHA-256）
-            val sessionKey = hkdfDerive(sharedSecret, ephemeralPub, recipientX25519Pub)
+            // 3. 标准 HKDF-SHA256 派生会话密钥（对齐 Python/Minecraft）
+            val sessionKey = hkdfDerive(
+                ikm = sharedSecret,
+                info = "spider-msg-ephemeral-v1".toByteArray(Charsets.UTF_8),
+                length = 32
+            )
 
             // 4. 生成 nonce
             val nonce = ByteArray(Protocol.NONCE_SIZE)
             secureRandom.nextBytes(nonce)
 
-            // 5. AAD（附加认证数据）
+            // 5. AAD（附加认证数据）— JSON 格式，键排序，对齐 Python json.dumps(sort_keys=True)
             val identity = keyManager.getIdentity() ?: return null
-            val aad = buildAad(identity.uuid, recipientX25519Pub, System.currentTimeMillis() / 1000)
+            val timestamp = System.currentTimeMillis() / 1000
+            val aad = buildAad(identity.uuid, recipientUuid, timestamp)
 
             // 6. AES-256-GCM 加密
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -99,9 +111,12 @@ class CryptoManager(private val keyManager: KeyManager) {
             // 1. ECDH 密钥协商（接收方私钥 + 发送方临时公钥）
             val sharedSecret = computeSharedSecret(recipientX25519Priv, encrypted.ephemeralPubKey)
 
-            // 2. HKDF 派生会话密钥
-            val identity = keyManager.getIdentity() ?: return null
-            val sessionKey = hkdfDerive(sharedSecret, encrypted.ephemeralPubKey, identity.x25519Public)
+            // 2. 标准 HKDF-SHA256 派生会话密钥（对齐 Python/Minecraft）
+            val sessionKey = hkdfDerive(
+                ikm = sharedSecret,
+                info = "spider-msg-ephemeral-v1".toByteArray(Charsets.UTF_8),
+                length = 32
+            )
 
             // 3. AES-256-GCM 解密
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -169,30 +184,71 @@ class CryptoManager(private val keyManager: KeyManager) {
     }
 
     /**
-     * HKDF 派生会话密钥（简化版：SHA-256(sharedSecret + ephemeralPub + recipientPub)）。
+     * 标准 HKDF-SHA256（RFC 5869）— 对齐 Python cryptography 库和 Minecraft 实现。
+     *
+     * Extract: PRK = HMAC-SHA256(salt, IKM)
+     * Expand:  OKM = T(1) | T(2) | ...
+     *          T(0) = empty
+     *          T(i) = HMAC-SHA256(PRK, T(i-1) | info | counter)
+     *
+     * @param ikm 输入密钥材料（ECDH 共享密钥）
+     * @param info 上下文信息（如 "spider-msg-ephemeral-v1"）
+     * @param length 输出密钥长度（字节）
+     * @param salt 盐值，null 时使用 32 字节全零（对齐 Python salt=None 和 Minecraft salt=null）
      */
-    private fun hkdfDerive(sharedSecret: ByteArray, ephemeralPub: String, recipientPub: String): ByteArray {
-        val md = java.security.MessageDigest.getInstance("SHA-256")
-        md.update(sharedSecret)
-        md.update(ephemeralPub.toByteArray(Charsets.UTF_8))
-        md.update(recipientPub.toByteArray(Charsets.UTF_8))
-        return md.digest()
+    private fun hkdfDerive(ikm: ByteArray, info: ByteArray, length: Int = 32, salt: ByteArray? = null): ByteArray {
+        val mac = Mac.getInstance("HmacSHA256")
+
+        // Extract 阶段
+        val actualSalt = salt ?: ByteArray(32) // 全零盐，对齐 Python salt=None
+        mac.init(SecretKeySpec(actualSalt, "HmacSHA256"))
+        val prk = mac.doFinal(ikm)
+
+        // Expand 阶段
+        mac.init(SecretKeySpec(prk, "HmacSHA256"))
+        val result = ByteArray(length)
+        var t = ByteArray(0)
+        var offset = 0
+        var counter = 1
+
+        while (offset < length) {
+            mac.reset()
+            mac.init(SecretKeySpec(prk, "HmacSHA256"))
+            mac.update(t)
+            mac.update(info)
+            mac.update(counter.toByte())
+            t = mac.doFinal()
+            val copyLen = minOf(t.size, length - offset)
+            System.arraycopy(t, 0, result, offset, copyLen)
+            offset += copyLen
+            counter++
+        }
+
+        return result
     }
 
     /**
      * 构建 AAD（附加认证数据）。
+     *
+     * 对齐 Python: json.dumps({"from": uuid, "to": uuid, "ts": timestamp, "proto": "spider/2.0"}, sort_keys=True)
+     * 键排序后: from, proto, to, ts
+     * Python 默认 separators=(', ', ': ')，即逗号和冒号后有空格
      */
-    private fun buildAad(fromUuid: String, toPubKey: String, timestamp: Long): ByteArray {
-        val aad = "spider-msg|$fromUuid|$toPubKey|$timestamp|${Protocol.PROTOCOL_VERSION}"
+    private fun buildAad(fromUuid: String, toUuid: String, timestamp: Long): ByteArray {
+        val aad = "{\"from\": \"$fromUuid\", \"proto\": \"spider/2.0\", \"to\": \"$toUuid\", \"ts\": $timestamp}"
         return aad.toByteArray(Charsets.UTF_8)
     }
 
     /**
      * 加密文件数据。
      */
-    fun encryptFileData(fileData: ByteArray, recipientX25519Pub: String): EncryptedMessage? {
-        return encryptMessage(Base64.encodeToString(fileData, Base64.NO_WRAP), recipientX25519Pub,
-            keyManager.getIdentity()?.ed25519Private ?: "")
+    fun encryptFileData(fileData: ByteArray, recipientUuid: String, recipientX25519Pub: String): EncryptedMessage? {
+        return encryptMessage(
+            Base64.encodeToString(fileData, Base64.NO_WRAP),
+            recipientUuid,
+            recipientX25519Pub,
+            keyManager.getIdentity()?.ed25519Private ?: ""
+        )
     }
 
     /**

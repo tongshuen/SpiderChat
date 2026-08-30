@@ -98,7 +98,7 @@ class MainActivity : AppCompatActivity() {
         if (myUuid.isEmpty()) return
 
         val encrypted = app.cryptoManager.encryptMessage(
-            text, contact.x25519Pub, app.keyManager.getIdentity()?.ed25519Private ?: ""
+            text, contact.uuid, contact.x25519Pub, app.keyManager.getIdentity()?.ed25519Private ?: ""
         )
         if (encrypted == null) {
             Toast.makeText(this, "消息加密失败", Toast.LENGTH_SHORT).show()
@@ -110,7 +110,7 @@ class MainActivity : AppCompatActivity() {
             put("ciphertext", encrypted.ciphertext)
             put("nonce", encrypted.nonce)
             put("tag", encrypted.tag)
-            put("ephemeral_pubkey", encrypted.ephemeralPubKey)
+            put("ephemeral_pub", encrypted.ephemeralPubKey)
             put("aad", encrypted.aad)
         }
 
@@ -320,7 +320,7 @@ class MainActivity : AppCompatActivity() {
             ciphertext = encryptedPayload.optString("ciphertext"),
             nonce = encryptedPayload.optString("nonce"),
             tag = encryptedPayload.optString("tag"),
-            ephemeralPubKey = encryptedPayload.optString("ephemeral_pubkey"),
+            ephemeralPubKey = encryptedPayload.optString("ephemeral_pub", encryptedPayload.optString("ephemeral_pubkey")),
             aad = encryptedPayload.optString("aad")
         )
 
