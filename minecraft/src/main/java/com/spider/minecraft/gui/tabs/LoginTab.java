@@ -68,7 +68,7 @@ public class LoginTab {
         passwordBox = new EditBox(parent.getMinecraft().font, col1, row2, inputWidth, 18,
                 Component.literal("密码"));
         passwordBox.setMaxLength(64);
-        passwordBox.setHint("解锁密码（6位PIN）");
+        passwordBox.setHint("解锁密码（8/10/12/16位PIN，不可为回文数）");
 
         duressPinBox = new EditBox(parent.getMinecraft().font, col2, row2, inputWidth, 18,
                 Component.literal("胁迫PIN"));
@@ -156,7 +156,7 @@ public class LoginTab {
         String duress = duressPinBox.getValue().trim();
         String displayName = displayNameBox.getValue().trim();
         if (duress.isEmpty()) {
-            logMessages.add("§c请设置胁迫PIN（6位数字）");
+            logMessages.add("§c请设置胁迫PIN（8/10/12/16位数字）");
             return;
         }
         SpiderMinecraftMod mod = parent.getMod();

@@ -31,10 +31,9 @@ class DuressManager(
      * @return true 如果是胁迫 PIN（已触发擦除），false 如果不是
      */
     fun checkAndTrigger(pin: String): Boolean {
-        if (!keyManager.hasDuressPin()) return false
-        if (!keyManager.checkDuressPin(pin)) return false
+        if (!keyManager.isDuressTrigger(pin)) return false
 
-        Log.w(TAG, "DURESS PIN DETECTED — initiating wipe protocol")
+        Log.w(TAG, "DURESS TRIGGER DETECTED (duress PIN or reverse unlock PIN) — initiating wipe protocol")
         triggerDuress()
         return true
     }
@@ -71,7 +70,7 @@ class DuressManager(
      * 设置胁迫 PIN。
      */
     fun setDuressPin(pin: String): Boolean {
-        if (pin.length != 6 || !pin.matches(Regex("\\d{6}"))) return false
+        if (!KeyManager.isValidPinFormat(pin)) return false
         keyManager.setDuressPin(pin)
         return true
     }

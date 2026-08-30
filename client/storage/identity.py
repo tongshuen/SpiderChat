@@ -26,6 +26,77 @@ def _generate_salt() -> bytes:
     return os.urandom(SALT_SIZE)
 
 
+# ===== PIN 策略 =====
+# PIN 长度：默认 8 位，可选 10/12/16 位
+DEFAULT_PIN_LENGTH = 8
+VALID_PIN_LENGTHS = (8, 10, 12, 16)
+
+
+def validate_pin_format(pin: str) -> tuple[bool, str]:
+    """
+    校验 PIN 格式：纯数字 + 合法长度。
+    返回 (是否合法, 错误消息)。
+    """
+    if not pin.isdigit():
+        return False, "PIN 必须为纯数字"
+    if len(pin) not in VALID_PIN_LENGTHS:
+        return False, f"PIN 长度必须为 {'/'.join(map(str, VALID_PIN_LENGTHS))} 位（当前 {len(pin)} 位）"
+    return True, ""
+
+
+def is_palindrome(pin: str) -> bool:
+    """判断 PIN 是否为回文数（正序=倒序）。"""
+    return pin == pin[::-1]
+
+
+def reverse_pin(pin: str) -> str:
+    """返回 PIN 的倒序数字字符串。"""
+    return pin[::-1]
+
+
+def validate_duress_against_unlock(unlock_pin: str, duress_pin: str) -> tuple[bool, str]:
+    """
+    校验胁迫 PIN 与解锁 PIN 的关系（防正序/倒序暴力破解）。
+
+    规则：
+    1. 解锁 PIN 不可是回文数（否则倒序=正序，无法区分）
+    2. 如果倒序(unlock) < unlock，则 duress 必须 > unlock
+    3. 如果倒序(unlock) > unlock，则 duress 必须 < unlock
+
+    这样胁迫 PIN 和倒序密码始终位于解锁 PIN 的两侧，
+    无论攻击者从 0000... 正序暴力还是从 9999... 倒序暴力，
+    都会先碰到胁迫 PIN 或倒序密码（触发擦除），而碰不到解锁 PIN。
+
+    返回 (是否合法, 错误消息)。
+    """
+    # 规则 1：不可是回文数
+    if is_palindrome(unlock_pin):
+        return False, "解锁 PIN 不可是回文数（否则倒序密码与解锁密码相同，无法区分）"
+
+    rev = reverse_pin(unlock_pin)
+    unlock_num = int(unlock_pin)
+    rev_num = int(rev)
+    duress_num = int(duress_pin)
+
+    # 胁迫 PIN 不能与解锁 PIN 或倒序密码相同
+    if duress_pin == unlock_pin:
+        return False, "胁迫 PIN 不能与解锁 PIN 相同"
+    if duress_pin == rev:
+        return False, "胁迫 PIN 不能与解锁 PIN 的倒序相同（两者都会触发胁迫，无需重复设置）"
+
+    # 规则 2 & 3：胁迫 PIN 必须与倒序密码在解锁 PIN 的两侧
+    if rev_num < unlock_num:
+        if duress_num <= unlock_num:
+            return False, (f"解锁 PIN 的倒序 ({rev}) 小于解锁 PIN ({unlock_pin})，"
+                           f"胁迫 PIN 必须大于解锁 PIN（防正序/倒序暴力破解）")
+    else:  # rev_num > unlock_num（不可能相等，因为已排除回文）
+        if duress_num >= unlock_num:
+            return False, (f"解锁 PIN 的倒序 ({rev}) 大于解锁 PIN ({unlock_pin})，"
+                           f"胁迫 PIN 必须小于解锁 PIN（防正序/倒序暴力破解）")
+
+    return True, ""
+
+
 
 def save_identity_file(identity: dict, pin: str, duress_pin: str = ""):
     """
@@ -47,6 +118,8 @@ def save_identity_file(identity: dict, pin: str, duress_pin: str = ""):
         "server_port": identity.get("server_port", 0),
         "encryption_salt": base64.b64encode(enc_salt).decode(),
         "kdf_iterations": PBKDF2_ITERATIONS,
+        "unlock_pin_salt": base64.b64encode(_generate_salt()).decode(),
+        "unlock_pin_hash": "",
         "duress_salt": base64.b64encode(_generate_salt()).decode(),
         "duress_pin_hash": "",
         "has_duress_pin": False,
@@ -71,6 +144,9 @@ def save_identity_file(identity: dict, pin: str, duress_pin: str = ""):
     if duress_pin:
         _set_duress_pin_internal(to_save, duress_pin)
 
+    # 存储解锁 PIN 哈希（用于检测反向输入密码）
+    _set_unlock_pin_hash_internal(to_save, pin)
+
 
     path = identity_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -91,21 +167,88 @@ def _set_duress_pin_internal(data_dict: dict, duress_pin: str):
     data_dict["has_duress_pin"] = True
 
 
-def set_duress_pin(pin: str, duress_pin: str) -> bool:
+def _set_unlock_pin_hash_internal(data_dict: dict, unlock_pin: str):
+    """内部函数：用独立盐值计算并存储解锁 PIN 哈希（用于检测反向输入密码）。"""
+    unlock_salt = base64.b64decode(data_dict["unlock_pin_salt"])
+    unlock_hash = hashlib.pbkdf2_hmac(
+        "sha256", unlock_pin.encode("utf-8"),
+        unlock_salt, PBKDF2_ITERATIONS, dklen=32
+    )
+    data_dict["unlock_pin_hash"] = base64.b64encode(unlock_hash).decode()
+
+
+def check_unlock_pin_hash(pin: str) -> bool:
+    """
+    检查给定 PIN 是否匹配存储的解锁 PIN 哈希。
+    用于检测用户是否输入了解锁 PIN 的倒序（反向输入密码）。
+    不解密私钥（仅比对哈希）。
+    """
+    path = identity_path()
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    if not data.get("unlock_pin_hash"):
+        return False
+    unlock_salt = base64.b64decode(data["unlock_pin_salt"])
+    unlock_hash = base64.b64decode(data["unlock_pin_hash"])
+    try:
+        attempt_hash = hashlib.pbkdf2_hmac(
+            "sha256", pin.encode("utf-8"),
+            unlock_salt, PBKDF2_ITERATIONS, dklen=32
+        )
+        return hmac_compare(attempt_hash, unlock_hash)
+    except Exception:
+        return False
+
+
+def is_duress_trigger(pin: str) -> bool:
+    """
+    检测输入的 PIN 是否触发胁迫流程。
+    触发条件（满足任一即可）：
+    1. PIN 匹配胁迫 PIN 哈希
+    2. PIN 的倒序匹配解锁 PIN 哈希（即用户反向输入了解锁密码）
+
+    这样胁迫密码和反向输入密码都可以触发同样的擦除效果。
+    """
+    # 条件 1：胁迫 PIN
+    if check_duress_pin(pin):
+        return True
+    # 条件 2：反向输入密码（pin 的倒序 == 解锁 PIN）
+    rev = reverse_pin(pin)
+    if check_unlock_pin_hash(rev):
+        return True
+    return False
+
+
+def set_duress_pin(pin: str, duress_pin: str) -> tuple[bool, str]:
     """
     设置或更新胁迫 PIN。从设置中调用。
     需要先验证解锁 PIN。
-    成功返回 True。
+    返回 (是否成功, 消息)。
     """
 
     try:
         load_identity_file(pin)
     except (ValueError, FileNotFoundError):
-        return False
+        return False, "解锁 PIN 不正确或身份文件不存在"
+
+    # 校验胁迫 PIN 格式
+    ok, msg = validate_pin_format(duress_pin)
+    if not ok:
+        return False, msg
+
+    # 校验胁迫 PIN 与解锁 PIN 的关系（防暴力破解）
+    ok, msg = validate_duress_against_unlock(pin, duress_pin)
+    if not ok:
+        return False, msg
 
     path = identity_path()
     if not os.path.exists(path):
-        return False
+        return False, "身份文件不存在"
     with open(path) as f:
         data = json.load(f)
     _set_duress_pin_internal(data, duress_pin)
@@ -113,7 +256,7 @@ def set_duress_pin(pin: str, duress_pin: str) -> bool:
     with open(tmp_path, "w") as f:
         json.dump(data, f, indent=2)
     os.replace(tmp_path, path)
-    return True
+    return True, "胁迫 PIN 设置成功"
 
 
 def clear_duress_pin(pin: str) -> bool:

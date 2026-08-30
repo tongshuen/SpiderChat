@@ -1,0 +1,27 @@
+# 打包相关文件（不提交到仓库）
+packed_archive.txt
+PackUp.py
+unpack.py
+*.packed
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Minecraft build
+build/
+.gradle/
+run/

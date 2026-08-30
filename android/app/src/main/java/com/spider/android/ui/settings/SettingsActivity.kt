@@ -229,8 +229,8 @@ class SettingsActivity : AppCompatActivity() {
                     Toast.makeText(this, "请输入旧胁迫 PIN", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
-                if (newPin.length != 6 || !newPin.matches(Regex("\\d{6}"))) {
-                    Toast.makeText(this, "新胁迫 PIN 必须为6位数字", Toast.LENGTH_SHORT).show()
+                if (!com.spider.android.crypto.KeyManager.isValidPinFormat(newPin)) {
+                    Toast.makeText(this, "新胁迫 PIN 必须为 8/10/12/16 位纯数字", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
                 if (newPin != confirmPin) {

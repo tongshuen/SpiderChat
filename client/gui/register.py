@@ -29,7 +29,8 @@ from client.crypto.keys import (
 )
 from client.storage.identity import (
     save_identity_file, load_identity_file,
-    check_duress_pin, wipe_all_data,
+    check_duress_pin, wipe_all_data, is_duress_trigger,
+    validate_pin_format, validate_duress_against_unlock, is_palindrome,
     set_duress_pin as identity_set_duress, clear_duress_pin as identity_clear_duress,
 )
 from client.utils.config import load_config, save_config, get_data_dir, identity_path, get_icon_path
@@ -109,7 +110,7 @@ class RegisterWindow:
             pin_frame = ctk.CTkFrame(self.root)
             pin_frame.pack(fill="x", padx=20, pady=10)
 
-            ctk.CTkLabel(pin_frame, text="设置解锁PIN (6位数字):").pack(anchor="w")
+            ctk.CTkLabel(pin_frame, text="设置解锁PIN (8/10/12/16位数字，不可为回文数):").pack(anchor="w")
             self.pin1_var = ctk.StringVar()
             ctk.CTkEntry(pin_frame, textvariable=self.pin1_var, show="*", width=100).pack(fill="x", pady=2)
 
@@ -117,7 +118,7 @@ class RegisterWindow:
             self.pin1c_var = ctk.StringVar()
             ctk.CTkEntry(pin_frame, textvariable=self.pin1c_var, show="*", width=100).pack(fill="x", pady=2)
 
-            ctk.CTkLabel(pin_frame, text="设置胁迫PIN (6位数字，被胁迫时使用):").pack(anchor="w", pady=(5, 0))
+            ctk.CTkLabel(pin_frame, text="设置胁迫PIN (8/10/12/16位数字，被胁迫时使用):").pack(anchor="w", pady=(5, 0))
             self.pin2_var = ctk.StringVar()
             ctk.CTkEntry(pin_frame, textvariable=self.pin2_var, show="*", width=100).pack(fill="x", pady=2)
 
@@ -161,13 +162,13 @@ class RegisterWindow:
 
             pin_frame = tk.LabelFrame(self.root, text="Spider PIN设置", bg="#2b2b2b", fg="white")
             pin_frame.pack(fill="x", padx=20, pady=10)
-            tk.Label(pin_frame, text="解锁PIN (6位数字):", bg="#2b2b2b", fg="white").pack(anchor="w")
+            tk.Label(pin_frame, text="解锁PIN (8/10/12/16位数字，不可为回文数):", bg="#2b2b2b", fg="white").pack(anchor="w")
             self.pin1_var = tk.StringVar()
             tk.Entry(pin_frame, textvariable=self.pin1_var, show="*").pack(fill="x", pady=2)
             tk.Label(pin_frame, text="确认解锁PIN:", bg="#2b2b2b", fg="white").pack(anchor="w", pady=(5, 0))
             self.pin1c_var = tk.StringVar()
             tk.Entry(pin_frame, textvariable=self.pin1c_var, show="*").pack(fill="x", pady=2)
-            tk.Label(pin_frame, text="胁迫PIN (6位数字):", bg="#2b2b2b", fg="white").pack(anchor="w", pady=(5, 0))
+            tk.Label(pin_frame, text="胁迫PIN (8/10/12/16位数字):", bg="#2b2b2b", fg="white").pack(anchor="w", pady=(5, 0))
             self.pin2_var = tk.StringVar()
             tk.Entry(pin_frame, textvariable=self.pin2_var, show="*").pack(fill="x", pady=2)
             tk.Label(pin_frame, text="确认胁迫PIN:", bg="#2b2b2b", fg="white").pack(anchor="w", pady=(5, 0))
@@ -213,11 +214,11 @@ class RegisterWindow:
         if USE_CTK:
             ctk.CTkLabel(self.root, text="🔐 输入PIN解锁", font=("Arial", 18, "bold")).pack(pady=30)
             self.unlock_pin = ctk.StringVar()
-            pin_entry = ctk.CTkEntry(self.root, textvariable=self.unlock_pin, show="*", width=150, placeholder_text="6位PIN")
+            pin_entry = ctk.CTkEntry(self.root, textvariable=self.unlock_pin, show="*", width=150, placeholder_text="8-16位PIN")
             pin_entry.pack(pady=10)
             pin_entry.focus_set()
             ctk.CTkButton(self.root, text="解锁", command=self._do_unlock).pack(pady=10)
-            ctk.CTkLabel(self.root, text="提示: 输入胁迫PIN将清除所有数据并通知服务器", text_color="orange", font=("Arial", 10)).pack(pady=20)
+            ctk.CTkLabel(self.root, text="提示: 输入胁迫PIN或解锁PIN的倒序将清除所有数据并通知服务器", text_color="orange", font=("Arial", 10)).pack(pady=20)
             self.root.bind("<Return>", lambda e: self._do_unlock())
         else:
             tk.Label(self.root, text="🔐 输入PIN解锁", font=("Arial", 18, "bold"), bg="#2b2b2b", fg="white").pack(pady=30)
@@ -226,7 +227,7 @@ class RegisterWindow:
             pin_entry.pack(pady=10)
             pin_entry.focus_set()
             tk.Button(self.root, text="解锁", command=self._do_unlock).pack(pady=10)
-            tk.Label(self.root, text="提示: 输入胁迫PIN将清除所有数据", bg="#2b2b2b", fg="orange", font=("Arial", 10)).pack(pady=20)
+            tk.Label(self.root, text="提示: 输入胁迫PIN或解锁PIN的倒序将清除所有数据", bg="#2b2b2b", fg="orange", font=("Arial", 10)).pack(pady=20)
             self.root.bind("<Return>", lambda e: self._do_unlock())
 
 
@@ -237,20 +238,28 @@ class RegisterWindow:
         pin2 = self.pin2_var.get().strip()
         pin2c = self.pin2c_var.get().strip()
 
-        if not (pin1.isdigit() and len(pin1) == 6):
-            self._show_error("解锁PIN必须是6位数字")
+        # 校验解锁 PIN 格式
+        ok, msg = validate_pin_format(pin1)
+        if not ok:
+            self._show_error(f"解锁{msg}")
             return
         if pin1 != pin1c:
             self._show_error("解锁PIN两次输入不一致")
             return
-        if not (pin2.isdigit() and len(pin2) == 6):
-            self._show_error("胁迫PIN必须是6位数字")
+
+        # 校验胁迫 PIN 格式
+        ok, msg = validate_pin_format(pin2)
+        if not ok:
+            self._show_error(f"胁迫{msg}")
             return
         if pin2 != pin2c:
             self._show_error("胁迫PIN两次输入不一致")
             return
-        if pin1 == pin2:
-            self._show_error("解锁PIN和胁迫PIN不能相同")
+
+        # 校验胁迫 PIN 与解锁 PIN 的关系（回文、位置规则）
+        ok, msg = validate_duress_against_unlock(pin1, pin2)
+        if not ok:
+            self._show_error(msg)
             return
 
 
@@ -359,7 +368,7 @@ class RegisterWindow:
             return
 
 
-        if check_duress_pin(pin):
+        if is_duress_trigger(pin):
             self._trigger_duress(pin)
             return
 

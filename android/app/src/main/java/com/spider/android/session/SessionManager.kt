@@ -67,9 +67,11 @@ class SessionManager(
      * 连接并登录。
      */
     fun login(host: String, port: Int, pin: String, callback: (Boolean, String?) -> Unit) {
-        // 先检查是否是胁迫 PIN
-        if (identityStore.verifyDuressPin(pin, keyManager)) {
-            Log.w(TAG, "Duress PIN detected!")
+        // 先检查是否是胁迫触发（胁迫 PIN 或解锁 PIN 的倒序）
+        val isDuress = identityStore.verifyDuressPin(pin, keyManager) ||
+                identityStore.verifyUnlockPinHash(KeyManager.reversePin(pin), keyManager)
+        if (isDuress) {
+            Log.w(TAG, "Duress trigger detected (duress PIN or reverse unlock PIN)!")
             onDuressDetected?.invoke()
             callback(false, "胁迫 PIN 已触发")
             return
@@ -112,17 +114,27 @@ class SessionManager(
      */
     fun register(host: String, port: Int, pin: String, duressPin: String,
                  displayName: String, callback: (Boolean, String?) -> Unit) {
-        if (pin.length != 6 || !pin.matches(Regex("\\d{6}"))) {
-            callback(false, "PIN 必须为6位数字")
+        // 校验解锁 PIN 格式
+        if (!KeyManager.isValidPinFormat(pin)) {
+            callback(false, "PIN 必须为 8/10/12/16 位纯数字")
             return
         }
-        if (duressPin.isNotEmpty() && (duressPin.length != 6 || !duressPin.matches(Regex("\\d{6}")))) {
-            callback(false, "胁迫 PIN 必须为6位数字")
+        // 校验解锁 PIN 不可为回文数
+        if (KeyManager.isPalindrome(pin)) {
+            callback(false, "解锁 PIN 不可为回文数（否则倒序密码与解锁密码相同，无法区分）")
             return
         }
-        if (duressPin == pin) {
-            callback(false, "胁迫 PIN 不能与解锁 PIN 相同")
-            return
+        // 校验胁迫 PIN 格式和与解锁 PIN 的关系
+        if (duressPin.isNotEmpty()) {
+            if (!KeyManager.isValidPinFormat(duressPin)) {
+                callback(false, "胁迫 PIN 必须为 8/10/12/16 位纯数字")
+                return
+            }
+            val duressErr = KeyManager.validateDuressAgainstUnlock(pin, duressPin)
+            if (duressErr != null) {
+                callback(false, duressErr)
+                return
+            }
         }
 
         // 创建身份

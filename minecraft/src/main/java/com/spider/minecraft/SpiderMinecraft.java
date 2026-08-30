@@ -63,8 +63,12 @@ public final class SpiderMinecraft {
     public static final String DB_FILE = "spider_data.db";
     public static final String FILES_DIR = "SpiderFiles";
 
-    // ===== 胁迫 PIN =====
-    public static final int DURESS_PIN_LENGTH = 6;
+    // ===== PIN 策略 =====
+    // PIN 长度：默认 8 位，可选 10/12/16 位
+    public static final int DEFAULT_PIN_LENGTH = 8;
+    public static final int[] VALID_PIN_LENGTHS = {8, 10, 12, 16};
+    // 保留旧常量名以兼容（指向默认值）
+    public static final int DURESS_PIN_LENGTH = DEFAULT_PIN_LENGTH;
 
     // ===== 阅后即焚 =====
     public static final String BURN_FLAG = "expire_after_read";

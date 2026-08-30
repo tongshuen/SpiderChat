@@ -254,7 +254,7 @@ public class SpiderCommand {
         String password = StringArgumentType.getString(ctx, "password");
         boolean needDuress = mod.getSessionManager().submitPassword(password);
         if (needDuress) {
-            send(ctx, Component.literal("首次注册！请设置胁迫 PIN (6位数字): /spiderminecraft login duress <pin>").withStyle(ChatFormatting.GOLD));
+            send(ctx, Component.literal("首次注册！请设置胁迫 PIN (8/10/12/16位数字): /spiderminecraft login duress <pin>").withStyle(ChatFormatting.GOLD));
         } else {
             send(ctx, Component.literal("密码已提交，等待服务器响应...").withStyle(ChatFormatting.YELLOW));
         }
@@ -271,7 +271,7 @@ public class SpiderCommand {
         if (ok) {
             send(ctx, Component.literal("胁迫 PIN 已设置，正在注册...").withStyle(ChatFormatting.GREEN));
         } else {
-            sendErr(ctx, "胁迫 PIN 设置失败（必须6位数字）");
+            sendErr(ctx, "胁迫 PIN 设置失败（必须为8/10/12/16位数字）");
         }
         return 1;
     }

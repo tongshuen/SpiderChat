@@ -82,7 +82,7 @@ class LoginActivity : AppCompatActivity() {
             tvStatus.text = "请填写服务器地址、端口和 PIN"
             return
         }
-        if (pin.length != 6 || !pin.matches(Regex("\\d{6}"))) {
+        if (!com.spider.android.crypto.KeyManager.isValidPinFormat(pin)) {
             tvStatus.text = getString(R.string.invalid_pin)
             return
         }
@@ -117,16 +117,16 @@ class LoginActivity : AppCompatActivity() {
             tvStatus.text = "请填写所有必填字段"
             return
         }
-        if (pin.length != 6 || !pin.matches(Regex("\\d{6}"))) {
-            tvStatus.text = getString(R.string.invalid_pin)
+        if (!com.spider.android.crypto.KeyManager.isValidPinFormat(pin)) {
+            tvStatus.text = "PIN 必须为 8/10/12/16 位纯数字"
             return
         }
-        if (duressPin.isNotEmpty() && (duressPin.length != 6 || !duressPin.matches(Regex("\\d{6}")))) {
-            tvStatus.text = "胁迫 PIN 必须为6位数字"
+        if (com.spider.android.crypto.KeyManager.isPalindrome(pin)) {
+            tvStatus.text = "解锁 PIN 不可为回文数"
             return
         }
-        if (duressPin == pin) {
-            tvStatus.text = "胁迫 PIN 不能与解锁 PIN 相同"
+        if (duressPin.isNotEmpty() && !com.spider.android.crypto.KeyManager.isValidPinFormat(duressPin)) {
+            tvStatus.text = "胁迫 PIN 必须为 8/10/12/16 位纯数字"
             return
         }
 

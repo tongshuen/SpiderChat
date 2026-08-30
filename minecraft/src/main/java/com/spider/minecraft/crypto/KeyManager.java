@@ -74,6 +74,7 @@ public class KeyManager {
     private byte[] salt;
     private String duressPinHash;
     private boolean hasDuressPin;
+    private String unlockPinHash;  // 解锁 PIN 哈希（用于检测反向输入密码）
     private boolean unlocked = false;
 
     private Path identityPath;
@@ -99,10 +100,19 @@ public class KeyManager {
     /**
      * 首次注册：生成 UUIDv1 + 密钥对，用 PIN 加密存储。
      *
-     * @param pin       解锁 PIN（用于加密私钥）
-     * @param duressPin 胁迫 PIN（6 位数字），可为 null
+     * @param pin       解锁 PIN（8/10/12/16 位数字，不可为回文数）
+     * @param duressPin 胁迫 PIN（8/10/12/16 位数字），可为 null
      */
     public void register(String pin, String duressPin) {
+        // 校验解锁 PIN 格式
+        if (!isValidPinFormat(pin)) {
+            throw new IllegalArgumentException("解锁 PIN 必须为 8/10/12/16 位纯数字");
+        }
+        // 校验解锁 PIN 不可为回文数
+        if (isPalindrome(pin)) {
+            throw new IllegalArgumentException("解锁 PIN 不可为回文数（否则倒序密码与解锁密码相同，无法区分）");
+        }
+
         // 生成 UUIDv1（绑定真实 MAC）
         identityUuid = UuidGenerator.generateUuidV1();
 
@@ -123,8 +133,19 @@ public class KeyManager {
         salt = new byte[SALT_SIZE];
         RANDOM.nextBytes(salt);
 
+        // 存储解锁 PIN 哈希（用于检测反向输入密码）
+        unlockPinHash = sha256Base64(pin);
+
         // 胁迫 PIN
         if (duressPin != null && !duressPin.isEmpty()) {
+            // 校验胁迫 PIN 格式和与解锁 PIN 的关系
+            if (!isValidPinFormat(duressPin)) {
+                throw new IllegalArgumentException("胁迫 PIN 必须为 8/10/12/16 位纯数字");
+            }
+            String duressErr = validateDuressAgainstUnlock(pin, duressPin);
+            if (duressErr != null) {
+                throw new IllegalArgumentException(duressErr);
+            }
             duressPinHash = sha256Base64(duressPin);
             hasDuressPin = true;
         } else {
@@ -153,6 +174,7 @@ public class KeyManager {
             salt = JsonUtil.b64Decode(obj.get("salt").getAsString());
             duressPinHash = obj.has("duress_pin_hash") ? obj.get("duress_pin_hash").getAsString() : "";
             hasDuressPin = obj.has("has_duress_pin") && obj.get("has_duress_pin").getAsBoolean();
+            unlockPinHash = obj.has("unlock_pin_hash") ? obj.get("unlock_pin_hash").getAsString() : "";
 
             // 用 PIN 派生密钥解密私钥
             byte[] key = deriveKey(pin, salt);
@@ -190,17 +212,116 @@ public class KeyManager {
     }
 
     /**
+     * 检查给定 PIN 是否匹配解锁 PIN 哈希。
+     * 用于检测用户是否输入了解锁 PIN 的倒序（反向输入密码）。
+     */
+    public boolean checkUnlockPinHash(String pin) {
+        if (unlockPinHash == null || unlockPinHash.isEmpty()) {
+            return false;
+        }
+        String hash = sha256Base64(pin);
+        return hash.equals(unlockPinHash);
+    }
+
+    /**
+     * 检测输入的 PIN 是否触发胁迫流程。
+     * 触发条件（满足任一即可）：
+     * 1. PIN 匹配胁迫 PIN 哈希
+     * 2. PIN 的倒序匹配解锁 PIN 哈希（即用户反向输入了解锁密码）
+     */
+    public boolean isDuressTrigger(String pin) {
+        if (checkDuressPin(pin)) {
+            return true;
+        }
+        String rev = reversePin(pin);
+        return checkUnlockPinHash(rev);
+    }
+
+    // ===== PIN 校验工具方法 =====
+
+    /**
+     * 校验 PIN 格式：纯数字 + 合法长度（8/10/12/16）。
+     */
+    public static boolean isValidPinFormat(String pin) {
+        if (pin == null || !pin.matches("\\d+")) {
+            return false;
+        }
+        for (int len : SpiderMinecraft.VALID_PIN_LENGTHS) {
+            if (pin.length() == len) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 判断 PIN 是否为回文数（正序=倒序）。
+     */
+    public static boolean isPalindrome(String pin) {
+        if (pin == null) return false;
+        return pin.equals(new StringBuilder(pin).reverse().toString());
+    }
+
+    /**
+     * 返回 PIN 的倒序数字字符串。
+     */
+    public static String reversePin(String pin) {
+        if (pin == null) return "";
+        return new StringBuilder(pin).reverse().toString();
+    }
+
+    /**
+     * 校验胁迫 PIN 与解锁 PIN 的关系（防正序/倒序暴力破解）。
+     *
+     * 规则：
+     * 1. 解锁 PIN 不可是回文数
+     * 2. 如果倒序(unlock) < unlock，则 duress 必须 > unlock
+     * 3. 如果倒序(unlock) > unlock，则 duress 必须 < unlock
+     *
+     * @return null 表示校验通过，非 null 表示错误消息
+     */
+    public static String validateDuressAgainstUnlock(String unlockPin, String duressPin) {
+        if (isPalindrome(unlockPin)) {
+            return "解锁 PIN 不可是回文数（否则倒序密码与解锁密码相同，无法区分）";
+        }
+        String rev = reversePin(unlockPin);
+        long unlockNum = Long.parseLong(unlockPin);
+        long revNum = Long.parseLong(rev);
+        long duressNum = Long.parseLong(duressPin);
+
+        if (duressPin.equals(unlockPin)) {
+            return "胁迫 PIN 不能与解锁 PIN 相同";
+        }
+        if (duressPin.equals(rev)) {
+            return "胁迫 PIN 不能与解锁 PIN 的倒序相同（两者都会触发胁迫，无需重复设置）";
+        }
+
+        if (revNum < unlockNum) {
+            if (duressNum <= unlockNum) {
+                return "解锁 PIN 的倒序 (" + rev + ") 小于解锁 PIN (" + unlockPin +
+                        ")，胁迫 PIN 必须大于解锁 PIN（防正序/倒序暴力破解）";
+            }
+        } else {
+            if (duressNum >= unlockNum) {
+                return "解锁 PIN 的倒序 (" + rev + ") 大于解锁 PIN (" + unlockPin +
+                        ")，胁迫 PIN 必须小于解锁 PIN（防正序/倒序暴力破解）";
+            }
+        }
+        return null;
+    }
+
+    /**
      * 设置胁迫 PIN。需要先解锁。
+     * 注意：此方法不校验与解锁 PIN 的关系（因为不知道解锁 PIN 明文），
+     * 调用方应先使用 validateDuressAgainstUnlock() 校验。
      */
     public void setDuressPin(String duressPin) {
         if (!unlocked) throw new IllegalStateException("Identity not unlocked");
-        if (duressPin == null || duressPin.length() != SpiderMinecraft.DURESS_PIN_LENGTH ||
-            !duressPin.matches("\\d+")) {
-            throw new IllegalArgumentException("Duress PIN must be " + SpiderMinecraft.DURESS_PIN_LENGTH + " digits");
+        if (duressPin == null || !isValidPinFormat(duressPin)) {
+            throw new IllegalArgumentException("胁迫 PIN 必须为 8/10/12/16 位纯数字");
         }
         duressPinHash = sha256Base64(duressPin);
         hasDuressPin = true;
-        // 重新保存（需要解锁 PIN — 实际应要求输入 PIN）
         LOGGER.info("[SpiderMinecraft] Duress PIN set");
     }
 
@@ -271,6 +392,7 @@ public class KeyManager {
             obj.addProperty("ed25519_priv", JsonUtil.b64Encode(ePrivEnc));
             obj.addProperty("ed25519_pub", JsonUtil.b64Encode(ed25519Pub.getEncoded()));
             obj.addProperty("salt", JsonUtil.b64Encode(salt));
+            obj.addProperty("unlock_pin_hash", unlockPinHash != null ? unlockPinHash : "");
             obj.addProperty("duress_pin_hash", duressPinHash);
             obj.addProperty("has_duress_pin", hasDuressPin);
             obj.addProperty("protocol", SpiderMinecraft.PROTOCOL_VERSION);

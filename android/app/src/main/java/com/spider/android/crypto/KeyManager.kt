@@ -53,6 +53,59 @@ class KeyManager(private val context: Context) {
     private var currentIdentity: Identity? = null
     private var duressPinHash: String? = null
     private var duressSalt: String? = null
+    private var unlockPinHash: String? = null
+    private var unlockSalt: String? = null
+
+    companion object {
+        // PIN 长度：默认 8 位，可选 10/12/16 位
+        val VALID_PIN_LENGTHS = intArrayOf(8, 10, 12, 16)
+        const val DEFAULT_PIN_LENGTH = 8
+
+        /** 校验 PIN 格式：纯数字 + 合法长度。 */
+        fun isValidPinFormat(pin: String?): Boolean {
+            if (pin == null || !pin.matches(Regex("\\d+"))) return false
+            return VALID_PIN_LENGTHS.contains(pin.length)
+        }
+
+        /** 判断 PIN 是否为回文数。 */
+        fun isPalindrome(pin: String?): Boolean {
+            if (pin == null) return false
+            return pin == pin.reversed()
+        }
+
+        /** 返回 PIN 的倒序数字字符串。 */
+        fun reversePin(pin: String?): String {
+            return pin?.reversed() ?: ""
+        }
+
+        /**
+         * 校验胁迫 PIN 与解锁 PIN 的关系（防正序/倒序暴力破解）。
+         * @return null 表示通过，非 null 表示错误消息
+         */
+        fun validateDuressAgainstUnlock(unlockPin: String, duressPin: String): String? {
+            if (isPalindrome(unlockPin)) {
+                return "解锁 PIN 不可是回文数（否则倒序密码与解锁密码相同，无法区分）"
+            }
+            val rev = reversePin(unlockPin)
+            val unlockNum = unlockPin.toLong()
+            val revNum = rev.toLong()
+            val duressNum = duressPin.toLong()
+
+            if (duressPin == unlockPin) return "胁迫 PIN 不能与解锁 PIN 相同"
+            if (duressPin == rev) return "胁迫 PIN 不能与解锁 PIN 的倒序相同（两者都会触发胁迫，无需重复设置）"
+
+            if (revNum < unlockNum) {
+                if (duressNum <= unlockNum) {
+                    return "解锁 PIN 的倒序 ($rev) 小于解锁 PIN ($unlockPin)，胁迫 PIN 必须大于解锁 PIN（防正序/倒序暴力破解）"
+                }
+            } else {
+                if (duressNum >= unlockNum) {
+                    return "解锁 PIN 的倒序 ($rev) 大于解锁 PIN ($unlockPin)，胁迫 PIN 必须小于解锁 PIN（防正序/倒序暴力破解）"
+                }
+            }
+            return null
+        }
+    }
 
     /**
      * 生成新的 X25519 密钥对。
@@ -178,6 +231,47 @@ class KeyManager(private val context: Context) {
         return hash == duressPinHash
     }
 
+    /**
+     * 设置解锁 PIN 哈希（用于检测反向输入密码）。
+     */
+    fun setUnlockPinHash(pin: String) {
+        val salt = generateSalt()
+        unlockSalt = Base64.encodeToString(salt, Base64.NO_WRAP)
+        val key = deriveKeyFromPin(pin, salt)
+        unlockPinHash = Base64.encodeToString(key, Base64.NO_WRAP)
+    }
+
+    /**
+     * 验证解锁 PIN 哈希（用于检测用户是否输入了解锁 PIN 的倒序）。
+     */
+    fun checkUnlockPinHash(pin: String): Boolean {
+        if (unlockPinHash == null || unlockSalt == null) return false
+        val salt = Base64.decode(unlockSalt, Base64.NO_WRAP)
+        val key = deriveKeyFromPin(pin, salt)
+        val hash = Base64.encodeToString(key, Base64.NO_WRAP)
+        return hash == unlockPinHash
+    }
+
+    /**
+     * 检测输入的 PIN 是否触发胁迫流程。
+     * 触发条件（满足任一即可）：
+     * 1. PIN 匹配胁迫 PIN 哈希
+     * 2. PIN 的倒序匹配解锁 PIN 哈希（即用户反向输入了解锁密码）
+     */
+    fun isDuressTrigger(pin: String): Boolean {
+        if (checkDuressPin(pin)) return true
+        val rev = reversePin(pin)
+        return checkUnlockPinHash(rev)
+    }
+
+    fun hasUnlockPinHash(): Boolean = unlockPinHash != null
+    fun getUnlockSalt(): String? = unlockSalt
+    fun getUnlockPinHash(): String? = unlockPinHash
+    fun loadUnlockPinFromStorage(salt: String, hash: String) {
+        unlockSalt = salt
+        unlockPinHash = hash
+    }
+
     fun hasDuressPin(): Boolean = duressPinHash != null
 
     fun getDuressSalt(): String? = duressSalt
@@ -195,5 +289,7 @@ class KeyManager(private val context: Context) {
         currentIdentity = null
         duressPinHash = null
         duressSalt = null
+        unlockPinHash = null
+        unlockSalt = null
     }
 }

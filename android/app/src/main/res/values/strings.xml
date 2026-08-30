@@ -4,8 +4,8 @@
     <string name="login_title">Spider 登录</string>
     <string name="server_address">服务器地址</string>
     <string name="server_port">端口</string>
-    <string name="unlock_pin">解锁 PIN（6位数字）</string>
-    <string name="duress_pin">胁迫 PIN（6位数字，仅注册时）</string>
+    <string name="unlock_pin">解锁 PIN（8/10/12/16位数字，不可为回文数）</string>
+    <string name="duress_pin">胁迫 PIN（8/10/12/16位数字，仅注册时）</string>
     <string name="display_name">显示名称</string>
     <string name="login">登录</string>
     <string name="register">注册</string>
@@ -36,6 +36,6 @@
     <string name="disconnected">已断开</string>
     <string name="login_failed">登录失败</string>
     <string name="registration_failed">注册失败</string>
-    <string name="invalid_pin">PIN 必须为6位数字</string>
+    <string name="invalid_pin">PIN 必须为 8/10/12/16 位纯数字</string>
     <string name="deadman_warning_received">收到死人开关警告消息</string>
 </resources>

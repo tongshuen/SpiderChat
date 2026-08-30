@@ -349,18 +349,8 @@ def set_duress_pin(unlock_pin: str, duress_pin: str) -> tuple[bool, str]:
     设置胁迫 PIN。需要解锁 PIN 进行身份验证。
     返回 (是否成功, 消息)。
     """
-    try:
-        load_identity_file(unlock_pin)
-    except (ValueError, FileNotFoundError):
-        return False, "Unlock PIN is incorrect or identity not found"
-
-    if not duress_pin.isdigit() or len(duress_pin) != 6:
-        return False, "Duress PIN must be 6 digits"
-
-    ok = identity_set_duress_pin(unlock_pin, duress_pin)
-    if ok:
-        return True, "Duress PIN set successfully"
-    return False, "Failed to set duress PIN"
+    from client.storage.identity import set_duress_pin as _set_duress
+    return _set_duress(unlock_pin, duress_pin)
 
 
 def verify_duress_pin(pin: str) -> bool:

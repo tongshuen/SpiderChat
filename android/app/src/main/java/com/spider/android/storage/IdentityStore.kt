@@ -68,6 +68,12 @@ class IdentityStore(context: Context) {
             hasDuress = 1
         }
 
+        // 解锁 PIN 哈希（用于检测反向输入密码）
+        val uSalt = keyManager.generateSalt()
+        val uKey = keyManager.deriveKeyFromPin(pin, uSalt)
+        val unlockSalt = Base64.encodeToString(uSalt, Base64.NO_WRAP)
+        val unlockHash = Base64.encodeToString(uKey, Base64.NO_WRAP)
+
         val db = dbHelper.writableDatabase
         val values = ContentValues().apply {
             put("uuid", identity.uuid)
@@ -83,6 +89,8 @@ class IdentityStore(context: Context) {
             put("duress_salt", duressSalt)
             put("duress_pin_hash", duressHash)
             put("has_duress_pin", hasDuress)
+            put("unlock_pin_salt", unlockSalt)
+            put("unlock_pin_hash", unlockHash)
         }
         // 存储 nonce 在 settings 表
         db.insertWithOnConflict(
@@ -168,6 +176,36 @@ class IdentityStore(context: Context) {
      */
     fun verifyDuressPin(pin: String, keyManager: KeyManager): Boolean {
         val info = getDuressInfo() ?: return false
+        val salt = Base64.decode(info.first, Base64.NO_WRAP)
+        val key = keyManager.deriveKeyFromPin(pin, salt)
+        val hash = Base64.encodeToString(key, Base64.NO_WRAP)
+        return hash == info.second
+    }
+
+    /**
+     * 获取解锁 PIN 哈希信息（用于检测反向输入密码，不解密私钥）。
+     */
+    fun getUnlockPinInfo(): Pair<String, String>? {
+        val db = dbHelper.readableDatabase
+        val cursor = db.query(
+            DatabaseHelper.TABLE_IDENTITY,
+            arrayOf("unlock_pin_salt", "unlock_pin_hash"),
+            null, null, null, null, null, "1"
+        )
+        cursor.use {
+            if (!it.moveToFirst()) return null
+            val salt = it.getString(0) ?: return null
+            val hash = it.getString(1) ?: return null
+            if (salt.isEmpty() || hash.isEmpty()) return null
+            return Pair(salt, hash)
+        }
+    }
+
+    /**
+     * 验证解锁 PIN 哈希（用于检测用户是否输入了解锁 PIN 的倒序）。
+     */
+    fun verifyUnlockPinHash(pin: String, keyManager: KeyManager): Boolean {
+        val info = getUnlockPinInfo() ?: return false
         val salt = Base64.decode(info.first, Base64.NO_WRAP)
         val key = keyManager.deriveKeyFromPin(pin, salt)
         val hash = Base64.encodeToString(key, Base64.NO_WRAP)

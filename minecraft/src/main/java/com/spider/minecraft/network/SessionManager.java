@@ -94,6 +94,17 @@ public class SessionManager {
             if (ok) {
                 performLogin();
             } else {
+                // 登录失败 — 检查是否为胁迫触发（胁迫 PIN 或解锁 PIN 的倒序）
+                if (KeyManager.isValidPinFormat(password) && keyManager.isDuressTrigger(password)) {
+                    SpiderMinecraftMod.LOGGER.warn("[SpiderMinecraft] Duress trigger detected at login — initiating wipe");
+                    if (isAuthenticated()) {
+                        sendCompromised();
+                        try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+                    }
+                    keyManager.wipeAllData();
+                    logout();
+                    return false;
+                }
                 loginState = LoginState.ENTERING_PASSWORD;
                 SpiderMinecraftMod.LOGGER.warn("[SpiderMinecraft] Login failed — wrong password");
             }

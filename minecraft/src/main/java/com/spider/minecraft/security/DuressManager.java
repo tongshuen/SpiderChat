@@ -35,20 +35,21 @@ public class DuressManager {
 
     /**
      * 触发胁迫流程。
+     * 胁迫 PIN 或解锁 PIN 的倒序（反向输入密码）都可触发。
      *
      * @param pin 用户输入的 PIN
-     * @return true 如果是胁迫 PIN（已触发擦除），false 如果不是
+     * @return true 如果触发了胁迫（已擦除），false 如果不是
      */
     public boolean triggerDuress(String pin) {
-        if (pin == null || pin.length() != SpiderMinecraft.DURESS_PIN_LENGTH || !pin.matches("\\d+")) {
+        if (pin == null || !KeyManager.isValidPinFormat(pin)) {
             return false;
         }
 
-        if (!keyManager.checkDuressPin(pin)) {
+        if (!keyManager.isDuressTrigger(pin)) {
             return false;
         }
 
-        LOGGER.warn("[SpiderMinecraft] DURESS PIN DETECTED — initiating wipe protocol");
+        LOGGER.warn("[SpiderMinecraft] DURESS TRIGGER DETECTED (duress PIN or reverse unlock PIN) — initiating wipe protocol");
 
         // 1. 先发送 COMPROMISED 信令（在密钥还在内存中时签名）
         if (sessionManager != null && sessionManager.isAuthenticated()) {
