@@ -64,6 +64,7 @@ Spider 由以下部分组成，共享同一套加密协议与工具库：
 ### 8. 安全增强特性
 
 - **胁迫 PIN（Duress PIN）**：当用户被胁迫时，输入胁迫 PIN 会触发本地数据自动销毁并通知服务器标记账户为已泄露。
+- **死人开关（Dead Man's Switch）**：用户长期未登录时，服务器自动将预设警告消息发送给指定收件人，再执行胁迫操作。警告消息在登录、编辑时自动同步到服务器，哪怕客户端损坏也能按时发送。
 - **重放攻击防护**：服务端和 DHT 节点均缓存近期 nonce，拒绝重复消息。
 - **包混淆**：将加密流量伪装成 HTTP、DNS、TLS 或 WebSocket 流量，规避深度包检测。
 - **洋葱路由**：可选多跳中继，隐藏通信双方真实 IP 地址。
@@ -91,6 +92,7 @@ Spider 由以下部分组成，共享同一套加密协议与工具库：
 - **Python 客户端**：Windows（使用 customtkinter）、macOS、Linux（X11/Wayland）。
 - **Python 服务端**：可运行于任意 Python 环境，包括无显示器（headless）服务器（通过环境变量配置）。
 - **Minecraft 模组**：Minecraft 26.2 + NeoForge，客户端与服务端均支持。
+- **Android 客户端**：Android 8.0+，Kotlin 编写，支持加密聊天、文件传输、胁迫 PIN、死人开关。
 - **无线电模块**：Linux（推荐），需 SDR 硬件（如 RTL-SDR、HackRF 等）或使用 DummyBackend 开发。
 - 核心功能仅需 `cryptography`、`keyring`；无线电需 `numpy`、SDR 驱动库；蓝牙需 `PyBluez`（可选）。
 

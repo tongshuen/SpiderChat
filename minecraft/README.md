@@ -13,6 +13,7 @@ Spider 官方通信网络在 Minecraft 世界中的投射。为 Minecraft 26.2 (
 - **SQLite 持久化** — 消息/用户/离线队列/群组全部持久化，服务器重启不丢失
 - **端到端加密 + 传输加密** — X25519 ECDH + AES-256-GCM + Ed25519 签名；TCP 全包加密 + 定期密钥轮换（PFS）
 - **胁迫 PIN** — `/spiderminecraft duress <pin>` 触发 wipe_all_data() + COMPROMISED 信令
+- **死人开关** — 长期未登录时自动发送警告消息给指定收件人，再执行胁迫操作；登录/编辑时自动同步到服务器
 - **阅后即焚** — 按每个人单独开关（裁剪自 Spider 的三规则）
 - **加密文件传输** — 存储在 saves/SpiderFiles/，对齐 Spider 的 encrypt_file_data
 - **群组系统** — 替代原"房间"，持久化到 SQLite

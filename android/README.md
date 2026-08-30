@@ -25,7 +25,7 @@ Spider 端到端加密通信系统的 Android 客户端。
 ### UI
 - **登录/注册界面** — 服务器配置、PIN、胁迫 PIN、显示名称
 - **主界面** — 底部导航（聊天/联系人/设置）
-- **聊天界面** — 消息列表、输入框、发送按钮
+- **聊天界面** — 消息列表、输入框、文件附件按钮、发送按钮
 - **联系人界面** — 联系人列表、搜索、添加
 - **设置界面** — 死人开关配置、胁迫 PIN 修改、通用设置
 
@@ -82,8 +82,8 @@ SpiderAndroid/
 │       └── res/
 │           ├── layout/                    # 布局文件
 │           ├── values/                    # 字符串/颜色/主题
-│           ├── drawable/                  # 图标
-│           └── mipmap-hdpi/               # 启动图标
+│           ├── drawable/                  # 图标资源
+│           └── mipmap-*/                  # 启动图标（mdpi~xxxhdpi 五密度）
 ├── build.gradle.kts
 ├── settings.gradle.kts
 ├── gradle.properties
