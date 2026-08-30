@@ -15,7 +15,7 @@ from collections import OrderedDict
 import customtkinter as ctk
 USE_CTK = True
 
-from client.utils.config import load_config, save_config, get_data_dir
+from client.utils.config import load_config, save_config, get_data_dir, get_icon_path
 from client.storage.identity import load_identity_file, wipe_all_data
 from client.storage.messages import MessageStore, generate_msg_id, STATUS_SENDING, STATUS_DELIVERED, STATUS_READ
 from client.network.tcp_client import TCPClient
@@ -136,6 +136,17 @@ class MainWindow:
         ctk.set_appearance_mode("dark")
         self._build_ctk_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._set_window_icon()
+
+    def _set_window_icon(self):
+        """设置窗口图标。"""
+        try:
+            import tkinter as _tk
+            icon_path = get_icon_path()
+            if os.path.exists(icon_path):
+                self.root.iconphoto(False, _tk.PhotoImage(file=icon_path))
+        except Exception:
+            pass
 
     def _build_ctk_ui(self):
         # 顶部搜索栏

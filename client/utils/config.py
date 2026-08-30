@@ -37,6 +37,11 @@ def get_data_dir():
     return path
 
 
+def get_icon_path():
+    """获取程序图标路径（项目资源目录下的 data/icon.png）。"""
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(project_root, "data", "icon.png")
+
 
 IDENTITY_FILE = "identity.json"
 SETTINGS_FILE = "settings.json"

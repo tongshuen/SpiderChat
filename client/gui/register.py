@@ -32,7 +32,7 @@ from client.storage.identity import (
     check_duress_pin, wipe_all_data,
     set_duress_pin as identity_set_duress, clear_duress_pin as identity_clear_duress,
 )
-from client.utils.config import load_config, save_config, get_data_dir, identity_path
+from client.utils.config import load_config, save_config, get_data_dir, identity_path, get_icon_path
 from client.network.tcp_client import TCPClient
 from client.network.discovery import UDPDiscovery
 from shared.crypto_utils import (
@@ -66,12 +66,23 @@ class RegisterWindow:
             self.root.geometry("540x580")
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._set_window_icon()
 
         if os.path.exists(identity_path()):
             self._build_unlock_ui()
         else:
             self._build_register_ui()
 
+
+    def _set_window_icon(self):
+        """设置窗口图标。"""
+        try:
+            import tkinter as _tk
+            icon_path = get_icon_path()
+            if os.path.exists(icon_path):
+                self.root.iconphoto(False, _tk.PhotoImage(file=icon_path))
+        except Exception:
+            pass
 
     def _build_register_ui(self):
         if USE_CTK:
