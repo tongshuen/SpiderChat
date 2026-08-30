@@ -1,15 +1,18 @@
 package com.spider.android.ui.main
 
+import android.app.AlertDialog
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.spider.android.R
+import com.spider.android.location.LocationHelper
 import com.spider.android.model.Message
 
 /**
  * 消息列表适配器 — 支持发送/接收两种布局。
+ * 长按消息气泡可显示位置详情（如果消息中包含经纬度信息）。
  */
 class MessageAdapter(
     private val messages: MutableList<Message>,
@@ -24,11 +27,13 @@ class MessageAdapter(
     inner class SentViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val tvText: TextView = view.findViewById(R.id.tvText)
         val tvTime: TextView = view.findViewById(R.id.tvTime)
+        val messageBubble: View = view.findViewById(R.id.messageBubble)
     }
 
     inner class ReceivedViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val tvText: TextView = view.findViewById(R.id.tvText)
         val tvTime: TextView = view.findViewById(R.id.tvTime)
+        val messageBubble: View = view.findViewById(R.id.messageBubble)
     }
 
     override fun getItemViewType(position: Int): Int {
@@ -53,10 +58,31 @@ class MessageAdapter(
             is SentViewHolder -> {
                 holder.tvText.text = message.text
                 holder.tvTime.text = message.timeString
+                setupLongClick(holder.messageBubble, message)
             }
             is ReceivedViewHolder -> {
                 holder.tvText.text = message.text
                 holder.tvTime.text = message.timeString
+                setupLongClick(holder.messageBubble, message)
+            }
+        }
+    }
+
+    /**
+     * 设置长按监听器：如果消息中包含位置信息，长按弹出位置详情。
+     */
+    private fun setupLongClick(view: View, message: Message) {
+        view.setOnLongClickListener {
+            val location = LocationHelper.parseFromMessage(message.text)
+            if (location != null) {
+                AlertDialog.Builder(view.context)
+                    .setTitle("位置信息")
+                    .setMessage(location.toShortString())
+                    .setPositiveButton("关闭", null)
+                    .show()
+                true
+            } else {
+                false
             }
         }
     }

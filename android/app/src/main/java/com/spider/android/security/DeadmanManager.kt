@@ -3,6 +3,7 @@ package com.spider.android.security
 import android.content.Context
 import android.util.Log
 import com.spider.android.crypto.KeyManager
+import com.spider.android.location.LocationHelper
 import com.spider.android.network.Protocol
 import com.spider.android.network.SpiderClient
 
@@ -19,7 +20,8 @@ import com.spider.android.network.SpiderClient
 class DeadmanManager(
     private val context: Context,
     private val keyManager: KeyManager,
-    private val spiderClient: SpiderClient
+    private val spiderClient: SpiderClient,
+    private val locationHelper: LocationHelper = LocationHelper(context)
 ) {
 
     private val TAG = "DeadmanManager"
@@ -108,10 +110,29 @@ class DeadmanManager(
         }
 
         val gracePeriodSec = cfg.graceDays * 86400
+
+        // 自动附加当前位置信息（经纬度、不确定度、定位时间）
+        // 这样哪怕客户端炸了，警告消息也能携带最后已知位置
+        val messageWithLocation = buildString {
+            append(cfg.warningMessage)
+            if (locationHelper.hasPermission()) {
+                val loc = locationHelper.getCurrentLocation()
+                if (loc != null) {
+                    append(loc.toWarningString())
+                    Log.i(TAG, "Location appended to deadman warning: " +
+                            "lat=%.4f lon=%.4f acc=%.1fm".format(loc.latitude, loc.longitude, loc.accuracy))
+                } else {
+                    Log.w(TAG, "Location permission granted but unable to get location")
+                }
+            } else {
+                Log.d(TAG, "No location permission, sending warning without location")
+            }
+        }
+
         spiderClient.sendDeadmanMessage(
             uuid = uuid,
             recipientUuid = cfg.recipientUuid,
-            messageText = cfg.warningMessage,
+            messageText = messageWithLocation,
             gracePeriodSec = gracePeriodSec
         )
         Log.i(TAG, "Deadman warning synced to server " +
