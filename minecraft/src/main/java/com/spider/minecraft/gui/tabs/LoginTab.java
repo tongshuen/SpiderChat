@@ -5,6 +5,7 @@ import com.spider.minecraft.gui.SpiderMainScreen;
 import com.spider.minecraft.network.DiscoveryService;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
 
@@ -29,6 +30,7 @@ public class LoginTab {
     private Button connectButton;
     private Button registerButton;
     private Button logoutButton;
+    private Checkbox stealthCheckBox;
     private List<String> serverList = new ArrayList<>();
     private List<String> logMessages = new ArrayList<>();
     private int scrollOffset = 0;
@@ -87,6 +89,10 @@ public class LoginTab {
                 .bounds(col1 + 190, row3, 80, 20)
                 .build();
 
+        stealthCheckBox = Checkbox.builder(Component.literal("隐匿模式（UUID 使用 MAC 哈希）"), parent.getMinecraft().font)
+                .bounds(col1, row3 + 25, 200, 20)
+                .build();
+
         parent.addRenderableWidget(displayNameBox);
         parent.addRenderableWidget(serverHostBox);
         parent.addRenderableWidget(discoverButton);
@@ -95,6 +101,7 @@ public class LoginTab {
         parent.addRenderableWidget(connectButton);
         parent.addRenderableWidget(registerButton);
         parent.addRenderableWidget(logoutButton);
+        parent.addRenderableWidget(stealthCheckBox);
     }
 
     private void discoverServers() {
@@ -161,6 +168,7 @@ public class LoginTab {
         }
         SpiderMinecraftMod mod = parent.getMod();
         if (mod == null || mod.getSessionManager() == null) return;
+        mod.getSessionManager().setStealthMode(stealthCheckBox.selected());
         boolean ok = mod.getSessionManager().submitDuressPin(duress, displayName);
         logMessages.add(ok ? "§a注册中..." : "§c胁迫PIN设置失败");
     }

@@ -102,8 +102,9 @@ public class KeyManager {
      *
      * @param pin       解锁 PIN（8/10/12/16 位数字，不可为回文数）
      * @param duressPin 胁迫 PIN（8/10/12/16 位数字），可为 null
+     * @param stealth   隐匿模式。true 时 UUID 使用 MAC 哈希而非原始 MAC
      */
-    public void register(String pin, String duressPin) {
+    public void register(String pin, String duressPin, boolean stealth) {
         // 校验解锁 PIN 格式
         if (!isValidPinFormat(pin)) {
             throw new IllegalArgumentException("解锁 PIN 必须为 8/10/12/16 位纯数字");
@@ -113,8 +114,8 @@ public class KeyManager {
             throw new IllegalArgumentException("解锁 PIN 不可为回文数（否则倒序密码与解锁密码相同，无法区分）");
         }
 
-        // 生成 UUIDv1（绑定真实 MAC）
-        identityUuid = UuidGenerator.generateUuidV1();
+        // 生成 UUIDv1（绑定真实 MAC；隐匿模式使用 MAC 哈希）
+        identityUuid = UuidGenerator.generateUuidV1(stealth);
 
         // 生成密钥对
         X25519KeyPairGenerator xGen = new X25519KeyPairGenerator();

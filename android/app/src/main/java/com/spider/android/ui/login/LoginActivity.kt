@@ -3,6 +3,7 @@ package com.spider.android.ui.login
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
@@ -139,7 +140,8 @@ class LoginActivity : AppCompatActivity() {
         tvStatus.text = "注册中..."
         btnRegister.isEnabled = false
 
-        app.sessionManager.register(host, port, pin, duressPin, displayName) { success, error ->
+        val stealth = findViewById<CheckBox>(R.id.cbStealth)?.isChecked ?: false
+        app.sessionManager.register(host, port, pin, duressPin, displayName, stealth) { success, error ->
             runOnUiThread {
                 btnRegister.isEnabled = true
                 if (success) {

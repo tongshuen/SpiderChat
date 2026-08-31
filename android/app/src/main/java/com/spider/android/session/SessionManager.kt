@@ -113,7 +113,7 @@ class SessionManager(
      * 注册新身份。
      */
     fun register(host: String, port: Int, pin: String, duressPin: String,
-                 displayName: String, callback: (Boolean, String?) -> Unit) {
+                 displayName: String, stealth: Boolean = false, callback: (Boolean, String?) -> Unit) {
         // 校验解锁 PIN 格式
         if (!KeyManager.isValidPinFormat(pin)) {
             callback(false, "PIN 必须为 8/10/12/16 位纯数字")
@@ -138,7 +138,7 @@ class SessionManager(
         }
 
         // 创建身份
-        val identity = keyManager.createIdentity(host, port, displayName)
+        val identity = keyManager.createIdentity(host, port, displayName, stealth)
         keyManager.setIdentity(identity)
 
         // 保存身份（加密存储）

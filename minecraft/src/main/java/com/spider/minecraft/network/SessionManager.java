@@ -39,6 +39,11 @@ public class SessionManager {
 
     // 登录流程状态
     private volatile LoginState loginState = LoginState.IDLE;
+    private volatile boolean stealthMode = false;
+
+    public void setStealthMode(boolean stealth) {
+        this.stealthMode = stealth;
+    }
     private volatile String pendingServerHost;
     private volatile int pendingServerPort;
 
@@ -119,7 +124,7 @@ public class SessionManager {
         if (loginState != LoginState.ENTERING_DURESS_PIN) return false;
 
         loginState = LoginState.REGISTERING;
-        keyManager.register(password, duressPin);
+        keyManager.register(password, duressPin, stealthMode);
         performRegister();
         return true;
     }

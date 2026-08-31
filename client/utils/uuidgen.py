@@ -188,10 +188,38 @@ def get_real_mac():
     return node_int
 
 
-def generate_uuid_v1():
+def _hash_mac_to_node(mac_int: int) -> int:
+    """
+    将 MAC 地址哈希为 48 位 node 值（隐匿模式）。
+
+    使用 SHA-256 哈希 MAC 原始字节，取前 6 字节（48 位），
+    并设置多播位（bit 0 of first byte = 1），
+    符合 RFC 4122 对非真实 MAC 的 node ID 规范。
+
+    同等防女巫效果：同一 MAC → 同一哈希 → 同一 node → 同一 UUID。
+    隐匿程度大幅增加：无法从 UUID 反推出原始 MAC。
+    """
+    import hashlib
+    mac_bytes = mac_int.to_bytes(6, byteorder="big")
+    digest = hashlib.sha256(mac_bytes).digest()
+    node_bytes = bytearray(digest[:6])
+    # 设置多播位（RFC 4122：随机/哈希 node ID 应设置此位）
+    node_bytes[0] |= 0x01
+    return int.from_bytes(bytes(node_bytes), byteorder="big")
+
+
+def generate_uuid_v1(stealth: bool = False):
     """
     Generate a UUIDv1 with the real physical MAC address forced into the node field.
     Raises RuntimeError if no physical MAC can be obtained (NO fallback).
+
+    Args:
+        stealth: 隐匿模式。True 时 node 字段使用 MAC 的 SHA-256 哈希（而非原始 MAC），
+                 同等防女巫效果，隐匿程度大幅增加。
     """
     mac_int = get_real_mac()
-    return uuid.uuid1(node=mac_int)
+    if stealth:
+        node_int = _hash_mac_to_node(mac_int)
+    else:
+        node_int = mac_int
+    return uuid.uuid1(node=node_int)

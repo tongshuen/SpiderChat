@@ -156,10 +156,70 @@ class KeyManager(private val context: Context) {
     }
 
     /**
-     * 生成随机 UUID（模拟 UUIDv1 + MAC，Android 环境用随机 UUID）。
+     * 生成 UUIDv1（绑定 ANDROID_ID 作为 MAC 替代）。
+     *
+     * @param stealth 隐匿模式。true 时 node 字段使用 ANDROID_ID 的 SHA-256 哈希
+     *                （而非原始 ANDROID_ID），同等防女巫效果，隐匿程度大幅增加。
      */
-    fun generateUuid(): String {
-        return java.util.UUID.randomUUID().toString()
+    fun generateUuid(stealth: Boolean = false): String {
+        val androidId = getMacAddress()
+        val node = if (stealth) hashIdToNode(androidId) else idToNode(androidId)
+        return buildUuidV1(node)
+    }
+
+    /**
+     * 将 ANDROID_ID 转为 48 位 node 值（普通模式）。
+     */
+    private fun idToNode(androidId: String): Long {
+        val bytes = androidId.toByteArray(Charsets.UTF_8)
+        var node = 0L
+        for (i in 0 until minOf(6, bytes.size)) {
+            node = (node shl 8) or (bytes[i].toLong() and 0xFF)
+        }
+        // 确保多播位为 0（模拟真实 MAC 的单播位）
+        node = node and 0xFEFFFFFFFFFFL
+        if (node == 0L) node = 0x000000000001L
+        return node
+    }
+
+    /**
+     * 将 ANDROID_ID 哈希为 48 位 node 值（隐匿模式）。
+     * 使用 SHA-256 哈希，取前 6 字节，设置多播位（RFC 4122）。
+     * 同等防女巫：同一 ANDROID_ID → 同一哈希 → 同一 node → 同一 UUID。
+     */
+    private fun hashIdToNode(androidId: String): Long {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val hash = digest.digest(androidId.toByteArray(Charsets.UTF_8))
+        var node = 0L
+        for (i in 0 until 6) {
+            node = (node shl 8) or (hash[i].toLong() and 0xFF)
+        }
+        // 设置多播位（RFC 4122：非真实 MAC 的 node ID 应设置此位）
+        node = node or 0x010000000000L
+        return node
+    }
+
+    /**
+     * 构造 UUIDv1 字符串。
+     * time_low(32) | time_mid(16) | time_hi+version(16) | variant+clock_seq(16) | node(48)
+     */
+    private fun buildUuidV1(node: Long): String {
+        val now = System.currentTimeMillis()
+        // UUID 纪元偏移：100ns 间隔数从 1582-10-15 到 1970-01-01
+        val num100NsIntervalsSinceUuidEpoch = 0x01b21dd213814000L
+        val timestamp = (now * 10000) + num100NsIntervalsSinceUuidEpoch
+
+        val timeLow = timestamp and 0xFFFFFFFFL
+        val timeMid = (timestamp shr 32) and 0xFFFFL
+        val timeHiAndVersion = ((timestamp shr 48) and 0x0FFFL) or 0x1000L
+
+        val clockSeq = java.util.concurrent.ThreadLocalRandom.current().nextInt(0x4000)
+        val variantAndClockSeq = (clockSeq or 0x8000).toLong()
+
+        val msb = (timeLow shl 32) or (timeMid shl 16) or timeHiAndVersion
+        val lsb = (variantAndClockSeq shl 48) or (node and 0xFFFFFFFFFFFFL)
+
+        return java.util.UUID(msb, lsb).toString()
     }
 
     /**
@@ -169,16 +229,16 @@ class KeyManager(private val context: Context) {
         return android.provider.Settings.Secure.getString(
             context.contentResolver,
             android.provider.Settings.Secure.ANDROID_ID
-        ) ?: "00:00:00:00:00:00"
+        ) ?: "0000000000000000"
     }
 
     /**
      * 创建新身份（注册时调用）。
      */
-    fun createIdentity(serverHost: String, serverPort: Int, displayName: String): Identity {
+    fun createIdentity(serverHost: String, serverPort: Int, displayName: String, stealth: Boolean = false): Identity {
         val (xPub, xPriv) = generateX25519KeyPair()
         val (ePub, ePriv) = generateEd25519KeyPair()
-        val uuid = generateUuid()
+        val uuid = generateUuid(stealth)
         val mac = getMacAddress()
         return Identity(
             uuid = uuid,

@@ -6,6 +6,8 @@ import org.apache.logging.log4j.Logger;
 
 import java.net.NetworkInterface;
 import java.net.SocketException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Enumeration;
 import java.util.UUID;
@@ -111,8 +113,47 @@ public final class UuidGenerator {
      *
      * @return UUIDv1 字符串
      */
-    public static String generateUuidV1() {
+    /**
+     * 将 MAC 地址哈希为 48 位 node 值（隐匿模式）。
+     *
+     * <p>使用 SHA-256 哈希 MAC 原始字节，取前 6 字节（48 位），
+     * 并设置多播位（bit 0 of first byte = 1），
+     * 符合 RFC 4122 对非真实 MAC 的 node ID 规范。
+     *
+     * <p>同等防女巫效果：同一 MAC → 同一哈希 → 同一 node → 同一 UUID。
+     * 隐匿程度大幅增加：无法从 UUID 反推出原始 MAC。
+     */
+    public static long hashMacToNode(long mac) {
+        try {
+            byte[] macBytes = new byte[6];
+            for (int i = 5; i >= 0; i--) {
+                macBytes[i] = (byte) (mac & 0xFF);
+                mac >>= 8;
+            }
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(macBytes);
+            // 取前 6 字节
+            long node = 0;
+            for (int i = 0; i < 6; i++) {
+                node = (node << 8) | (hash[i] & 0xFF);
+            }
+            // 设置多播位（RFC 4122）
+            node |= 0x010000000000L;
+            return node;
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256 not available", e);
+        }
+    }
+
+    /**
+     * 生成 UUIDv1，将真实 MAC 地址强制写入 node 字段。
+     *
+     * @param stealth 隐匿模式。true 时 node 字段使用 MAC 的 SHA-256 哈希（而非原始 MAC），
+     *                同等防女巫效果，隐匿程度大幅增加。
+     */
+    public static String generateUuidV1(boolean stealth) {
         long mac = getRealMac();
+        long node = stealth ? hashMacToNode(mac) : mac;
 
         // 获取当前时间戳（100ns 间隔，自 1582-10-15）
         // UUID 纪元偏移：100ns 间隔数从 1582-10-15 到 1970-01-01
@@ -134,7 +175,7 @@ public final class UuidGenerator {
         // 组合 most significant bits
         long msb = (timeLow << 32) | (timeMid << 16) | timeHiAndVersion;
         // 组合 least significant bits: variant+clockseq (16) | node (48)
-        long lsb = (variantAndClockSeq << 48) | (mac & 0xFFFFFFFFFFFFL);
+        long lsb = (variantAndClockSeq << 48) | (node & 0xFFFFFFFFFFFFL);
 
         UUID uuid = new UUID(msb, lsb);
         String uuidStr = uuid.toString();

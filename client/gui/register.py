@@ -134,6 +134,11 @@ class RegisterWindow:
             self.display_name_var = ctk.StringVar()
             ctk.CTkEntry(name_frame, textvariable=self.display_name_var, placeholder_text="SpiderUser").pack(fill="x", padx=5, pady=2)
 
+            # 隐匿模式
+            self.stealth_var = ctk.BooleanVar(value=False)
+            ctk.CTkCheckBox(self.root, text="隐匿模式（UUID 使用 MAC 哈希而非原始 MAC，同等防女巫，更隐私）",
+                           variable=self.stealth_var).pack(pady=(5, 0), padx=20, anchor="w")
+
             dc_frame = ctk.CTkFrame(self.root)
             dc_frame.pack(fill="x", padx=20, pady=5)
             ctk.CTkLabel(dc_frame, text="🔗 直连设置 (可选)", font=("Arial", 12, "bold")).pack(anchor="w", padx=5)
@@ -182,6 +187,12 @@ class RegisterWindow:
             tk.Label(name_frame, text="(4-32字节 UTF-8):", bg="#2b2b2b", fg="white").pack(anchor="w")
             self.display_name_var = tk.StringVar()
             tk.Entry(name_frame, textvariable=self.display_name_var).pack(fill="x", padx=5, pady=2)
+
+            # 隐匿模式
+            self.stealth_var = tk.BooleanVar(value=False)
+            tk.Checkbutton(self.root, text="隐匿模式（UUID 使用 MAC 哈希而非原始 MAC，同等防女巫，更隐私）",
+                          variable=self.stealth_var, bg="#2b2b2b", fg="white",
+                          selectcolor="#444", activebackground="#2b2b2b").pack(pady=(5, 0), padx=20, anchor="w")
 
     def _search_lan(self):
         try:
@@ -283,7 +294,7 @@ class RegisterWindow:
 
         try:
 
-            uuid_obj = generate_uuid_v1()
+            uuid_obj = generate_uuid_v1(stealth=self.stealth_var.get())
             uuid_str = str(uuid_obj)
             mac_int = uuid_obj.node
             mac_str = ":".join(f"{(mac_int >> (i*8)) & 0xff:02x}" for i in range(5, -1, -1))
