@@ -54,14 +54,15 @@ class MessageAdapter(
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         val message = messages[position]
+        val displayText = LocationHelper.stripMetadata(message.text)
         when (holder) {
             is SentViewHolder -> {
-                holder.tvText.text = message.text
+                holder.tvText.text = displayText
                 holder.tvTime.text = message.timeString
                 setupLongClick(holder.messageBubble, message)
             }
             is ReceivedViewHolder -> {
-                holder.tvText.text = message.text
+                holder.tvText.text = displayText
                 holder.tvTime.text = message.timeString
                 setupLongClick(holder.messageBubble, message)
             }
@@ -69,20 +70,28 @@ class MessageAdapter(
     }
 
     /**
-     * 设置长按监听器：如果消息中包含位置信息，长按弹出位置详情。
+     * 设置长按监听器：如果消息中包含元数据（时间戳+位置），长按弹出详情。
      */
     private fun setupLongClick(view: View, message: Message) {
         view.setOnLongClickListener {
-            val location = LocationHelper.parseFromMessage(message.text)
-            if (location != null) {
+            val meta = LocationHelper.parseMetadata(message.text)
+            if (meta != null && meta.first != null) {
+                val (location, sendTs) = meta
                 AlertDialog.Builder(view.context)
-                    .setTitle("位置信息")
-                    .setMessage(location.toShortString())
+                    .setTitle("消息详情")
+                    .setMessage(location!!.toDetailString(sendTs ?: location.timestamp))
                     .setPositiveButton("关闭", null)
                     .show()
                 true
             } else {
-                false
+                val sendTime = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+                    .format(java.util.Date((message.timestamp ?: System.currentTimeMillis() / 1000) * 1000))
+                AlertDialog.Builder(view.context)
+                    .setTitle("消息详情")
+                    .setMessage("发送时间：$sendTime")
+                    .setPositiveButton("关闭", null)
+                    .show()
+                true
             }
         }
     }

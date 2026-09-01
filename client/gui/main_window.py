@@ -51,6 +51,68 @@ RECEIPT_TEXT = {
     "delivered_cross_server": "已送达（跨服务器）",
 }
 
+# ===== 消息元数据工具（与 Android LocationHelper 格式一致）=====
+_META_START = "\u200b[SPIDER-META]"
+_META_END = "[/SPIDER-META]\u200b"
+
+
+def strip_metadata(text: str) -> str:
+    """从消息文本中移除元数据部分，返回纯消息文本。"""
+    start = text.find(_META_START)
+    if start < 0:
+        return text
+    end = text.find(_META_END, start)
+    if end < 0:
+        return text
+    return text[:start] + text[end + len(_META_END):]
+
+
+def parse_metadata(text: str):
+    """从消息文本中解析元数据，返回 (meta_dict or None)。"""
+    start = text.find(_META_START)
+    if start < 0:
+        return None
+    end = text.find(_META_END, start)
+    if end < 0:
+        return None
+    json_str = text[start + len(_META_START):end]
+    try:
+        return json.loads(json_str)
+    except Exception:
+        return None
+
+
+def to_dms(degrees: float, is_lat: bool) -> str:
+    """十进制经纬度转 DMS（精确到 1″）。"""
+    import math
+    abs_deg = abs(degrees)
+    d = int(abs_deg)
+    m_full = (abs_deg - d) * 60
+    m = int(m_full)
+    s = int(round((m_full - m) * 60))
+    if s >= 60:
+        s = 0
+        m += 1
+    if m >= 60:
+        m = 0
+        d += 1
+    if is_lat:
+        direction = "N" if degrees >= 0 else "S"
+    else:
+        direction = "E" if degrees >= 0 else "W"
+    return f"{d}°{m:02d}′{s:02d}″{direction}"
+
+
+def format_accuracy(accuracy_meters: float) -> str:
+    """不确定度（米）转为 r=xxx′ 或 r=xxx″ 格式。"""
+    if accuracy_meters < 0:
+        return "r=未知"
+    seconds = accuracy_meters / 30.92
+    if seconds < 60:
+        return f"r={max(1, int(seconds))}″"
+    minutes = seconds / 60
+    return f"r={max(1, int(minutes))}′"
+
 
 class MainWindow:
     """登录成功后的主聊天窗口。"""
@@ -499,7 +561,9 @@ class MainWindow:
         outer.pack(anchor=side, padx=10, pady=2, fill="x")
         bubble = ctk.CTkFrame(outer, fg_color=color)
         bubble.pack(side=side, padx=0, pady=0)
-        label = ctk.CTkLabel(bubble, text=text, wraplength=400, text_color="white")
+        # 过滤元数据，只显示纯消息文本
+        display_text = strip_metadata(text)
+        label = ctk.CTkLabel(bubble, text=display_text, wraplength=400, text_color="white")
         label.pack(padx=8, pady=(4, 0))
         if direction == "sent":
             receipt_label = ctk.CTkLabel(bubble, text=self._receipt_status_text(delivery_status),
@@ -507,10 +571,10 @@ class MainWindow:
             receipt_label.pack(padx=8, pady=(0, 4))
             if msg_id:
                 self._receipt_widgets[msg_id] = {"label": receipt_label, "status": delivery_status}
-        else:
-            time_str = time.strftime("%H:%M", time.localtime(timestamp)) if timestamp else ""
-            if time_str:
-                ctk.CTkLabel(bubble, text=time_str, font=("Arial", 9), text_color="#CCCCCC").pack(padx=8, pady=(0, 4))
+        # 接收消息不再在气泡旁显示时间戳，改为鼠标悬停显示
+        # 给气泡和标签添加悬停 tooltip（发送时间精确到秒 + 位置信息）
+        self._attach_message_tooltip(bubble, text, timestamp)
+        self._attach_message_tooltip(label, text, timestamp)
         if direction == "recv" and msg_id:
             exist = any(item["msg_id"] == msg_id for item in self._message_widgets)
             if not exist:
@@ -520,6 +584,49 @@ class MainWindow:
                 })
         self._scroll_chat_to_bottom()
         return outer
+
+    def _attach_message_tooltip(self, widget, raw_text: str, timestamp: int):
+        """给消息控件添加鼠标悬停 tooltip（发送时间 + 位置元数据）。"""
+        tooltip = {"window": None}
+
+        def on_enter(event):
+            if tooltip["window"] is not None:
+                return
+            meta = parse_metadata(raw_text)
+            lines = []
+            # 发送时间（精确到秒）
+            ts = meta.get("ts", timestamp) if meta else timestamp
+            if ts:
+                time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+                lines.append(f"发送时间：{time_str}")
+            # 位置信息（如果有元数据）
+            if meta:
+                if meta.get("lat"):
+                    lines.append(f"纬度：{meta['lat']}")
+                if meta.get("lon"):
+                    lines.append(f"经度：{meta['lon']}")
+                if meta.get("r"):
+                    lines.append(f"不确定度：{meta['r']}")
+            if not lines:
+                return
+            tw = ctk.CTkToplevel(widget)
+            tw.wm_overrideredirect(True)
+            tw.wm_geometry(f"+{event.x_root + 10}+{event.y_root + 10}")
+            tw.attributes("-topmost", True)
+            frame = ctk.CTkFrame(tw, fg_color="#222222", corner_radius=6)
+            frame.pack(padx=1, pady=1)
+            for line in lines:
+                ctk.CTkLabel(frame, text=line, font=("Arial", 10),
+                            text_color="#DDDDDD", anchor="w").pack(anchor="w", padx=8, pady=1)
+            tooltip["window"] = tw
+
+        def on_leave(event):
+            if tooltip["window"] is not None:
+                tooltip["window"].destroy()
+                tooltip["window"] = None
+
+        widget.bind("<Enter>", on_enter)
+        widget.bind("<Leave>", on_leave)
 
     def _display_file_message(self, msg: dict, direction: str, msg_id: str = ""):
         color = (self.config.get("sent_message_color", DEFAULT_SENT_COLOR)

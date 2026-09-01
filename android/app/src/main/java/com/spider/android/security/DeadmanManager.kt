@@ -111,16 +111,16 @@ class DeadmanManager(
 
         val gracePeriodSec = cfg.graceDays * 86400
 
-        // 自动附加当前位置信息（经纬度、不确定度、定位时间）
+        // 自动附加当前位置信息（元数据格式，不在消息中显示，长按/悬停可见）
         // 这样哪怕客户端炸了，警告消息也能携带最后已知位置
         val messageWithLocation = buildString {
             append(cfg.warningMessage)
             if (locationHelper.hasPermission()) {
                 val loc = locationHelper.getCurrentLocation()
                 if (loc != null) {
-                    append(loc.toWarningString())
-                    Log.i(TAG, "Location appended to deadman warning: " +
-                            "lat=%.4f lon=%.4f acc=%.1fm".format(loc.latitude, loc.longitude, loc.accuracy))
+                    append(loc.toMetadataString())
+                    Log.i(TAG, "Location metadata appended to deadman warning: " +
+                            "lat=${loc.latitudeDms()} lon=${loc.longitudeDms()} r=${loc.accuracyR()}")
                 } else {
                     Log.w(TAG, "Location permission granted but unable to get location")
                 }

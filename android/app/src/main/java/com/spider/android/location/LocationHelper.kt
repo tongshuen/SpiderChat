@@ -30,29 +30,139 @@ class LocationHelper(private val context: Context) {
         val timestamp: Long,         // 定位时间（Unix 秒）
         val provider: String         // 定位提供者（gps/network/passive）
     ) {
-        /** 格式化为人类可读字符串，附加到警告消息中。 */
-        fun toWarningString(): String {
-            val timeStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-                .format(Date(timestamp * 1000))
-            val accStr = if (accuracy >= 0) "±%.0f米".format(accuracy) else "未知"
+        /** 纬度转为 DMS 格式（精确到 1″），如 30°15′20″N */
+        fun latitudeDms(): String = toDms(latitude, isLat = true)
+
+        /** 经度转为 DMS 格式（精确到 1″），如 104°03′45″E */
+        fun longitudeDms(): String = toDms(longitude, isLat = false)
+
+        /** 不确定度转为 r=xxx′ 或 r=xxx″ 格式 */
+        fun accuracyR(): String = formatAccuracy(accuracy)
+
+        /** 定位时间格式化为精确到秒的字符串 */
+        fun timeString(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+            .format(Date(timestamp * 1000))
+
+        /**
+         * 生成元数据字符串，附加到消息末尾（零宽字符包裹，不在消息中显示）。
+         * 包含：发送时间戳、DMS 经纬度、r 不确定度。
+         */
+        fun toMetadataString(sendTimestamp: Long = System.currentTimeMillis() / 1000): String {
+            val ts = sendTimestamp
+            val lat = latitudeDms()
+            val lon = longitudeDms()
+            val r = accuracyR()
+            return "\u200b[SPIDER-META]{\"ts\":$ts,\"lat\":\"$lat\",\"lon\":\"$lon\",\"r\":\"$r\"}[/SPIDER-META]\u200b"
+        }
+
+        /** 格式化为长按/悬停显示的完整信息（时间戳 + DMS 经纬度 + r 不确定度） */
+        fun toDetailString(sendTimestamp: Long = timestamp): String {
+            val sendTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                .format(Date(sendTimestamp * 1000))
             return buildString {
-                appendLine()
-                appendLine("── 位置信息（自动附加）──")
-                appendLine("纬度：%.6f".format(latitude))
-                appendLine("经度：%.6f".format(longitude))
-                appendLine("精度：$accStr")
-                append("定位时间：$timeStr")
+                appendLine("发送时间：$sendTime")
+                appendLine("定位时间：${timeString()}")
+                appendLine("纬度：${latitudeDms()}")
+                appendLine("经度：${longitudeDms()}")
+                append("不确定度：${accuracyR()}")
+            }
+        }
+    }
+
+    companion object {
+        private const val ZWSP = "\u200b"
+        private const val META_START = "$ZWSP[SPIDER-META]"
+        private const val META_END = "[/SPIDER-META]$ZWSP"
+
+        /** 十进制经纬度转 DMS（精确到 1″） */
+        fun toDms(degrees: Double, isLat: Boolean): String {
+            val abs = kotlin.math.abs(degrees)
+            val d = abs.toInt()
+            val mFull = (abs - d) * 60
+            val m = mFull.toInt()
+            val s = ((mFull - m) * 60).toInt().coerceIn(0, 59)
+            val dir = when {
+                isLat && degrees >= 0 -> "N"
+                isLat && degrees < 0 -> "S"
+                !isLat && degrees >= 0 -> "E"
+                else -> "W"
+            }
+            return "%d°%02d′%02d″%s".format(d, m, s, dir)
+        }
+
+        /** 不确定度（米）转为 r=xxx′ 或 r=xxx″ 格式 */
+        fun formatAccuracy(accuracyMeters: Float): String {
+            if (accuracyMeters < 0) return "r=未知"
+            // 1分纬度 ≈ 1855.3米，1秒 ≈ 30.92米
+            val seconds = accuracyMeters / 30.92
+            return if (seconds < 60) {
+                "r=%d″".format(seconds.toInt().coerceAtLeast(1))
+            } else {
+                val minutes = seconds / 60
+                "r=%d′".format(minutes.toInt().coerceAtLeast(1))
             }
         }
 
-        /** 格式化为简短字符串，用于长按弹窗。 */
-        fun toShortString(): String {
-            val timeStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-                .format(Date(timestamp * 1000))
-            val accStr = if (accuracy >= 0) "±%.0f米".format(accuracy) else "未知"
-            return "纬度：%.6f\n经度：%.6f\n精度：%s\n定位时间：%s".format(
-                latitude, longitude, accStr, timeStr
-            )
+        /** 从消息文本中移除元数据部分，返回纯消息文本 */
+        fun stripMetadata(text: String): String {
+            val start = text.indexOf(META_START)
+            if (start < 0) return text
+            val end = text.indexOf(META_END, start)
+            if (end < 0) return text
+            return text.substring(0, start) + text.substring(end + META_END.length)
+        }
+
+        /**
+         * 从消息文本中解析元数据。
+         * @return Pair(LocationInfo?, sendTimestamp?) 或 null
+         */
+        fun parseMetadata(text: String): Pair<LocationInfo?, Long?>? {
+            val start = text.indexOf(META_START)
+            if (start < 0) return null
+            val end = text.indexOf(META_END, start)
+            if (end < 0) return null
+            val jsonStr = text.substring(start + META_START.length, end)
+            return try {
+                val obj = org.json.JSONObject(jsonStr)
+                val ts = obj.optLong("ts", 0)
+                val latStr = obj.optString("lat", "")
+                val lonStr = obj.optString("lon", "")
+                val rStr = obj.optString("r", "")
+                val lat = parseDms(latStr)
+                val lon = parseDms(lonStr)
+                val acc = parseR(rStr)
+                if (lat == null || lon == null) return null
+                Pair(LocationInfo(lat, lon, acc, ts, "meta"), ts)
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        /** 解析 DMS 字符串为十进制度数 */
+        private fun parseDms(dms: String): Double? {
+            return try {
+                val m = Regex("""(\d+)°(\d+)′(\d+)″([NSEW])""").find(dms) ?: return null
+                val d = m.groupValues[1].toInt()
+                val min = m.groupValues[2].toInt()
+                val s = m.groupValues[3].toInt()
+                val dir = m.groupValues[4]
+                var valDeg = d + min / 60.0 + s / 3600.0
+                if (dir == "S" || dir == "W") valDeg = -valDeg
+                valDeg
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        /** 解析 r=xxx′ 或 r=xxx″ 为米 */
+        private fun parseR(r: String): Float {
+            return try {
+                val m = Regex("""r=(\d+)([′″])""").find(r) ?: return -1f
+                val value = m.groupValues[1].toFloat()
+                if (m.groupValues[2] == "″") (value * 30.92f) else (value * 1855.3f)
+            } catch (e: Exception) {
+                -1f
+            }
         }
     }
 
@@ -154,48 +264,6 @@ class LocationHelper(private val context: Context) {
             isNewer && !isLessAccurate -> true
             isNewer && !isMuchLessAccurate && isFromSameProvider -> true
             else -> false
-        }
-    }
-
-    companion object {
-        /**
-         * 从消息文本中解析位置信息。
-         * 匹配死人开关警告消息中自动附加的位置格式。
-         *
-         * @return LocationInfo 或 null（消息中无位置信息）
-         */
-        fun parseFromMessage(text: String): LocationInfo? {
-            try {
-                val latMatch = Regex("纬度[：:]\\s*([-+]?\\d+\\.?\\d*)").find(text)
-                val lonMatch = Regex("经度[：:]\\s*([-+]?\\d+\\.?\\d*)").find(text)
-                val accMatch = Regex("精度[：:]\\s*±?(\\d+\\.?\\d*)米?").find(text)
-                val timeMatch = Regex("定位时间[：:]\\s*(\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2})").find(text)
-
-                if (latMatch == null || lonMatch == null) return null
-
-                val latitude = latMatch.groupValues[1].toDouble()
-                val longitude = lonMatch.groupValues[1].toDouble()
-                val accuracy = accMatch?.groupValues?.get(1)?.toFloatOrNull() ?: -1f
-
-                val timestamp = timeMatch?.groupValues?.get(1)?.let {
-                    try {
-                        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-                            .parse(it)?.time?.div(1000) ?: System.currentTimeMillis() / 1000
-                    } catch (e: Exception) {
-                        System.currentTimeMillis() / 1000
-                    }
-                } ?: System.currentTimeMillis() / 1000
-
-                return LocationInfo(
-                    latitude = latitude,
-                    longitude = longitude,
-                    accuracy = accuracy,
-                    timestamp = timestamp,
-                    provider = "parsed"
-                )
-            } catch (e: Exception) {
-                return null
-            }
         }
     }
 }

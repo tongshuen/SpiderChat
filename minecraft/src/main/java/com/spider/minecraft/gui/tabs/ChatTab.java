@@ -15,12 +15,41 @@ import net.minecraft.network.chat.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 
 /**
  * 聊天标签页 — 显示和发送加密消息。
  * 模仿原版 Spider 客户端的聊天界面。
+ * 消息元数据（时间戳+位置）通过鼠标悬停显示，不在消息文本中显示。
  */
 public class ChatTab {
+
+    private static final String META_START = "\u200b[SPIDER-META]";
+    private static final String META_END = "[/SPIDER-META]\u200b";
+
+    /** 从消息文本中移除元数据部分 */
+    private static String stripMetadata(String text) {
+        int start = text.indexOf(META_START);
+        if (start < 0) return text;
+        int end = text.indexOf(META_END, start);
+        if (end < 0) return text;
+        return text.substring(0, start) + text.substring(end + META_END.length());
+    }
+
+    /** 从消息文本中解析元数据 JSON */
+    private static com.google.gson.JsonObject parseMetadata(String text) {
+        int start = text.indexOf(META_START);
+        if (start < 0) return null;
+        int end = text.indexOf(META_END, start);
+        if (end < 0) return null;
+        String jsonStr = text.substring(start + META_START.length(), end);
+        try {
+            return com.google.gson.JsonParser.parseString(jsonStr).getAsJsonObject();
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
     private final SpiderMainScreen parent;
     private final int x, y, width, height;
@@ -142,18 +171,54 @@ public class ChatTab {
         graphics.fill(x, msgAreaY, x + width, msgAreaY + msgAreaHeight, 0xFF0F1923);
         graphics.fill(x + 1, msgAreaY + 1, x + width - 1, msgAreaY + msgAreaHeight - 1, 0xFF1A1A2E);
 
-        // 渲染消息
+        // 渲染消息（过滤元数据，只显示纯文本）
         int lineY = msgAreaY + 4;
         int startIdx = Math.max(0, Math.min(scrollOffset, Math.max(0, messageLog.size() - MAX_VISIBLE_MESSAGES)));
         int endIdx = Math.min(messageLog.size(), startIdx + MAX_VISIBLE_MESSAGES);
 
+        int hoveredIdx = -1;
         for (int i = startIdx; i < endIdx; i++) {
-            String msg = messageLog.get(i);
+            String rawMsg = messageLog.get(i);
+            String displayMsg = stripMetadata(rawMsg);
             if (parent.getMinecraft().font != null) {
-                graphics.drawString(parent.getMinecraft().font, Component.literal(msg),
+                graphics.drawString(parent.getMinecraft().font, Component.literal(displayMsg),
                         x + 6, lineY, 0xFFFFFFFF, false);
             }
+            // 检测鼠标悬停
+            if (mouseX >= x && mouseX <= x + width &&
+                mouseY >= lineY - 2 && mouseY <= lineY + 10) {
+                hoveredIdx = i;
+            }
             lineY += 12;
+        }
+
+        // 悬停 tooltip（显示发送时间 + 位置元数据）
+        if (hoveredIdx >= 0) {
+            String rawMsg = messageLog.get(hoveredIdx);
+            com.google.gson.JsonObject meta = parseMetadata(rawMsg);
+            List<String> tooltipLines = new ArrayList<>();
+            if (meta != null && meta.has("ts")) {
+                long ts = meta.get("ts").getAsLong();
+                String timeStr = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(ts * 1000));
+                tooltipLines.add("发送时间：" + timeStr);
+            }
+            if (meta != null) {
+                if (meta.has("lat")) tooltipLines.add("纬度：" + meta.get("lat").getAsString());
+                if (meta.has("lon")) tooltipLines.add("经度：" + meta.get("lon").getAsString());
+                if (meta.has("r")) tooltipLines.add("不确定度：" + meta.get("r").getAsString());
+            }
+            if (!tooltipLines.isEmpty()) {
+                int tx = mouseX + 12;
+                int ty = mouseY + 12;
+                int tw = 180;
+                int th = tooltipLines.size() * 12 + 8;
+                graphics.fill(tx - 2, ty - 2, tx + tw, ty + th, 0xFF000000);
+                graphics.fill(tx - 1, ty - 1, tx + tw - 1, ty + th - 1, 0xFF222222);
+                for (int j = 0; j < tooltipLines.size(); j++) {
+                    graphics.drawString(parent.getMinecraft().font, Component.literal(tooltipLines.get(j)),
+                            tx + 4, ty + 4 + j * 12, 0xFFDDDDDD, false);
+                }
+            }
         }
 
         // 滚动提示
