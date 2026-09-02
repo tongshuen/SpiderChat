@@ -73,8 +73,10 @@ public class KeyManager {
     private String identityUuid;
     private byte[] salt;
     private String duressPinHash;
+    private byte[] duressPinSalt;  // 胁迫 PIN 盐值（PBKDF2）
     private boolean hasDuressPin;
     private String unlockPinHash;  // 解锁 PIN 哈希（用于检测反向输入密码）
+    private byte[] unlockPinSalt;  // 解锁 PIN 盐值（PBKDF2）
     private boolean unlocked = false;
 
     private Path identityPath;
@@ -134,8 +136,10 @@ public class KeyManager {
         salt = new byte[SALT_SIZE];
         RANDOM.nextBytes(salt);
 
-        // 存储解锁 PIN 哈希（用于检测反向输入密码）
-        unlockPinHash = sha256Base64(pin);
+        // 存储解锁 PIN 哈希（用于检测反向输入密码）— 使用带盐 PBKDF2
+        unlockPinSalt = new byte[SALT_SIZE];
+        RANDOM.nextBytes(unlockPinSalt);
+        unlockPinHash = JsonUtil.b64Encode(deriveKey(pin, unlockPinSalt));
 
         // 胁迫 PIN
         if (duressPin != null && !duressPin.isEmpty()) {
@@ -147,10 +151,13 @@ public class KeyManager {
             if (duressErr != null) {
                 throw new IllegalArgumentException(duressErr);
             }
-            duressPinHash = sha256Base64(duressPin);
+            duressPinSalt = new byte[SALT_SIZE];
+            RANDOM.nextBytes(duressPinSalt);
+            duressPinHash = JsonUtil.b64Encode(deriveKey(duressPin, duressPinSalt));
             hasDuressPin = true;
         } else {
             duressPinHash = "";
+            duressPinSalt = null;
             hasDuressPin = false;
         }
 
@@ -174,8 +181,12 @@ public class KeyManager {
             identityUuid = obj.get("uuid").getAsString();
             salt = JsonUtil.b64Decode(obj.get("salt").getAsString());
             duressPinHash = obj.has("duress_pin_hash") ? obj.get("duress_pin_hash").getAsString() : "";
+            duressPinSalt = obj.has("duress_pin_salt") && !obj.get("duress_pin_salt").getAsString().isEmpty()
+                    ? JsonUtil.b64Decode(obj.get("duress_pin_salt").getAsString()) : null;
             hasDuressPin = obj.has("has_duress_pin") && obj.get("has_duress_pin").getAsBoolean();
             unlockPinHash = obj.has("unlock_pin_hash") ? obj.get("unlock_pin_hash").getAsString() : "";
+            unlockPinSalt = obj.has("unlock_pin_salt") && !obj.get("unlock_pin_salt").getAsString().isEmpty()
+                    ? JsonUtil.b64Decode(obj.get("unlock_pin_salt").getAsString()) : null;
 
             // 用 PIN 派生密钥解密私钥
             byte[] key = deriveKey(pin, salt);
@@ -205,10 +216,10 @@ public class KeyManager {
      * @return true 如果输入的是胁迫 PIN
      */
     public boolean checkDuressPin(String pin) {
-        if (!hasDuressPin || duressPinHash == null || duressPinHash.isEmpty()) {
+        if (!hasDuressPin || duressPinHash == null || duressPinHash.isEmpty() || duressPinSalt == null) {
             return false;
         }
-        String hash = sha256Base64(pin);
+        String hash = JsonUtil.b64Encode(deriveKey(pin, duressPinSalt));
         return hash.equals(duressPinHash);
     }
 
@@ -217,10 +228,10 @@ public class KeyManager {
      * 用于检测用户是否输入了解锁 PIN 的倒序（反向输入密码）。
      */
     public boolean checkUnlockPinHash(String pin) {
-        if (unlockPinHash == null || unlockPinHash.isEmpty()) {
+        if (unlockPinHash == null || unlockPinHash.isEmpty() || unlockPinSalt == null) {
             return false;
         }
-        String hash = sha256Base64(pin);
+        String hash = JsonUtil.b64Encode(deriveKey(pin, unlockPinSalt));
         return hash.equals(unlockPinHash);
     }
 
@@ -321,9 +332,11 @@ public class KeyManager {
         if (duressPin == null || !isValidPinFormat(duressPin)) {
             throw new IllegalArgumentException("胁迫 PIN 必须为 8/10/12/16 位纯数字");
         }
-        duressPinHash = sha256Base64(duressPin);
+        duressPinSalt = new byte[SALT_SIZE];
+        RANDOM.nextBytes(duressPinSalt);
+        duressPinHash = JsonUtil.b64Encode(deriveKey(duressPin, duressPinSalt));
         hasDuressPin = true;
-        LOGGER.info("[SpiderMinecraft] Duress PIN set");
+        LOGGER.info("[SpiderMinecraft] Duress PIN set (PBKDF2 with salt)");
     }
 
     /**
@@ -339,6 +352,8 @@ public class KeyManager {
         if (x25519Priv != null) Arrays.fill(x25519Priv.getEncoded(), (byte) 0);
         if (ed25519Priv != null) Arrays.fill(ed25519Priv.getEncoded(), (byte) 0);
         if (salt != null) Arrays.fill(salt, (byte) 0);
+        if (unlockPinSalt != null) Arrays.fill(unlockPinSalt, (byte) 0);
+        if (duressPinSalt != null) Arrays.fill(duressPinSalt, (byte) 0);
 
         // 删除身份文件
         try {
@@ -394,7 +409,9 @@ public class KeyManager {
             obj.addProperty("ed25519_pub", JsonUtil.b64Encode(ed25519Pub.getEncoded()));
             obj.addProperty("salt", JsonUtil.b64Encode(salt));
             obj.addProperty("unlock_pin_hash", unlockPinHash != null ? unlockPinHash : "");
+            obj.addProperty("unlock_pin_salt", unlockPinSalt != null ? JsonUtil.b64Encode(unlockPinSalt) : "");
             obj.addProperty("duress_pin_hash", duressPinHash);
+            obj.addProperty("duress_pin_salt", duressPinSalt != null ? JsonUtil.b64Encode(duressPinSalt) : "");
             obj.addProperty("has_duress_pin", hasDuressPin);
             obj.addProperty("protocol", SpiderMinecraft.PROTOCOL_VERSION);
 
