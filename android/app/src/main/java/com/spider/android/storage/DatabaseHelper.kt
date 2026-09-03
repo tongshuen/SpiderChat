@@ -13,7 +13,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(
 
     companion object {
         private const val DATABASE_NAME = "spider.db"
-        private const val DATABASE_VERSION = 5
+        private const val DATABASE_VERSION = 6
 
         const val TABLE_MESSAGES = "messages"
         const val TABLE_CONTACTS = "contacts"
@@ -71,6 +71,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(
                 server_host TEXT DEFAULT '',
                 server_port INTEGER DEFAULT 0,
                 display_name TEXT DEFAULT '',
+                avatar_b64 TEXT DEFAULT '',
                 encryption_salt TEXT DEFAULT '',
                 duress_salt TEXT DEFAULT '',
                 duress_pin_hash TEXT DEFAULT '',
@@ -102,6 +103,9 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(
         if (oldVersion < 5) {
             db.execSQL("ALTER TABLE $TABLE_IDENTITY ADD COLUMN unlock_pin_salt TEXT DEFAULT ''")
             db.execSQL("ALTER TABLE $TABLE_IDENTITY ADD COLUMN unlock_pin_hash TEXT DEFAULT ''")
+        }
+        if (oldVersion < 6) {
+            db.execSQL("ALTER TABLE $TABLE_IDENTITY ADD COLUMN avatar_b64 TEXT DEFAULT ''")
         }
     }
 

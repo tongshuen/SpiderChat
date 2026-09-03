@@ -130,9 +130,9 @@ class RegisterWindow:
 
             name_frame = ctk.CTkFrame(self.root)
             name_frame.pack(fill="x", padx=20, pady=5)
-            ctk.CTkLabel(name_frame, text="显示名称 (4-32 字节):", font=("Arial", 10)).pack(anchor="w", padx=5)
+            ctk.CTkLabel(name_frame, text="显示名称 (留空自动生成 32 位随机):", font=("Arial", 10)).pack(anchor="w", padx=5)
             self.display_name_var = ctk.StringVar()
-            ctk.CTkEntry(name_frame, textvariable=self.display_name_var, placeholder_text="SpiderUser").pack(fill="x", padx=5, pady=2)
+            ctk.CTkEntry(name_frame, textvariable=self.display_name_var, placeholder_text="留空自动生成").pack(fill="x", padx=5, pady=2)
 
             # 隐匿模式
             self.stealth_var = ctk.BooleanVar(value=False)
@@ -182,7 +182,7 @@ class RegisterWindow:
 
             tk.Button(self.root, text="🚀 注册并连接", command=self._do_register).pack(pady=10)
 
-            name_frame = tk.LabelFrame(self.root, text="显示名称", bg="#2b2b2b", fg="white")
+            name_frame = tk.LabelFrame(self.root, text="显示名称 (留空自动生成)", bg="#2b2b2b", fg="white")
             name_frame.pack(fill="x", padx=20, pady=5)
             tk.Label(name_frame, text="(4-32字节 UTF-8):", bg="#2b2b2b", fg="white").pack(anchor="w")
             self.display_name_var = tk.StringVar()
@@ -275,7 +275,10 @@ class RegisterWindow:
 
 
         display_name = self.display_name_var.get().strip()
-        if display_name:
+        if not display_name:
+            from client.crypto.keys import generate_default_display_name
+            display_name = generate_default_display_name()
+        else:
             from client.crypto.keys import validate_display_name
             ok, err = validate_display_name(display_name)
             if not ok:
@@ -316,10 +319,11 @@ class RegisterWindow:
 
             save_identity_file(identity, pin1, duress_pin=pin2)
 
-
-            if display_name:
-                from client.storage.identity import save_user_profile
-                save_user_profile({"display_name": display_name})
+            # 保存显示名称和默认头像
+            from client.storage.identity import save_user_profile
+            from client.crypto.keys import set_default_avatar
+            save_user_profile({"display_name": display_name})
+            set_default_avatar()
 
 
             self.config["server_host"] = host

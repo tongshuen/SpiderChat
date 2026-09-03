@@ -112,9 +112,17 @@ class LoginActivity : AppCompatActivity() {
         val portStr = etServerPort.text.toString().trim()
         val pin = etPin.text.toString().trim()
         val duressPin = etDuressPin.text.toString().trim()
-        val displayName = etDisplayName.text.toString().trim()
+        var displayName = etDisplayName.text.toString().trim()
+        if (displayName.isEmpty()) {
+            // 留空自动生成 32 位 16 进制随机数
+            displayName = java.security.SecureRandom().let { sr ->
+                val bytes = ByteArray(16)
+                sr.nextBytes(bytes)
+                bytes.joinToString("") { "%02x".format(it) }
+            }
+        }
 
-        if (host.isEmpty() || portStr.isEmpty() || pin.isEmpty() || displayName.isEmpty()) {
+        if (host.isEmpty() || portStr.isEmpty() || pin.isEmpty()) {
             tvStatus.text = "请填写所有必填字段"
             return
         }

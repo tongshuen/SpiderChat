@@ -167,7 +167,13 @@ def apply_settings(cfg: dict) -> dict:
     if "link_mode" in cfg and isinstance(cfg["link_mode"], str):
         from client.network.link import LinkMode
         try:
-            cur["link_mode"] = LinkMode(cfg["link_mode"]).value
+            mode = LinkMode(cfg["link_mode"])
+            # 无线电链路需要实验性功能启用
+            if mode == LinkMode.RADIO_MESH:
+                from client.experimental.manager import is_feature_enabled
+                if not is_feature_enabled("radio_link"):
+                    mode = LinkMode.TCP  # 静默回退
+            cur["link_mode"] = mode.value
         except ValueError:
             pass
     if "radio_config" in cfg and isinstance(cfg["radio_config"], dict):

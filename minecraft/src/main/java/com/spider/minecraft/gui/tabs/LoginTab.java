@@ -162,6 +162,14 @@ public class LoginTab {
     private void register() {
         String duress = duressPinBox.getValue().trim();
         String displayName = displayNameBox.getValue().trim();
+        if (displayName.isEmpty()) {
+            // 留空自动生成 32 位 16 进制随机数
+            byte[] bytes = new byte[16];
+            new java.security.SecureRandom().nextBytes(bytes);
+            StringBuilder sb = new StringBuilder();
+            for (byte b : bytes) sb.append(String.format("%02x", b));
+            displayName = sb.toString();
+        }
         if (duress.isEmpty()) {
             logMessages.add("§c请设置胁迫PIN（8/10/12/16位数字）");
             return;

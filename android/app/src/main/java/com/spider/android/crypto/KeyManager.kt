@@ -37,6 +37,9 @@ class KeyManager(private val context: Context) {
         }
     }
 
+    // 默认蜘蛛网头像（64x64 PNG base64）
+    private const val DEFAULT_AVATAR_B64 = ""
+
     data class Identity(
         val uuid: String,
         val macAddress: String,
@@ -46,7 +49,8 @@ class KeyManager(private val context: Context) {
         val ed25519Private: String,
         val serverHost: String = "",
         val serverPort: Int = 0,
-        val displayName: String = ""
+        val displayName: String = "",
+        val avatarB64: String = ""
     )
 
     private val secureRandom = SecureRandom()
@@ -249,7 +253,8 @@ class KeyManager(private val context: Context) {
             ed25519Private = ePriv,
             serverHost = serverHost,
             serverPort = serverPort,
-            displayName = displayName
+            displayName = displayName,
+            avatarB64 = DEFAULT_AVATAR_B64
         )
     }
 

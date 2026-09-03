@@ -364,3 +364,40 @@ def remove_duress_pin(unlock_pin: str) -> tuple[bool, str]:
     if ok:
         return True, "Duress PIN removed"
     return False, "Failed to remove duress PIN"
+
+
+# ===== 默认头像和默认名称 =====
+
+DEFAULT_AVATAR_B64 = "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAB9ElEQVR4nO1ZXY/EIAisl/3/f5l7aLYxVmD4stvEebsTYaAy0u5xbGxs1IGIqkP8VQeoxk7gabQKp8LRby05Ypq7nvTFkogGxlOzh0FEXMllFRI2LoLKAOG3Io1pAJCcO0RyVr07vGYmEr3bkmdyOrVyckQx7TLcA621u6o8DgObkz2Yw7SK6sbLeX6lhh4QzISjPKwKIeQoHqjep8wErohDD1EunvxP+ZmoS757EAV+YBwk4ldhwjQa7LZTGNzblQRUNQiGVxH1Dx7uYA+4PSgwOeV0iesTk+w4c7B67FXlrjDqqLMuAVWXBGNZdhwRX/9OzCJSJ647IzcXt2R+AsiYNdU+90YZaUdo4DdQkVcjKOyBiyVSe3+U/o/SOzUXekWsfcZJO6ebKf6P0iN0nZzSeSktAVPXJnaFOQGknFN+7o1+7FHiabxiGv1wC1b0x/f6ttOHv/f0im9kpe9TcQ865M3CPYV7AG38CNYGkc5ICL8K0fdTaaRCi6av6XAP8oj0QGZ6SDCcxNQYL0oPs4xy8jdI59RGXvVpq+33AS42ZzwGw35YqLolfP26ZovBqdW7zz45B9NEKe+VLcG7OQdggFyzZCCPIngTr4B7FkihnjBODzfAIcolaGaIHndxh1DXX/udXEf1+X79O/FOYGPj5fgHTEoKA8QdkBIAAAAASUVORK5CYII="
+DEFAULT_AVATAR_MIME = "image/png"
+DEFAULT_AVATAR_WIDTH = 64
+DEFAULT_AVATAR_HEIGHT = 64
+
+
+def generate_default_display_name() -> str:
+    """生成 32 位 16 进制随机数作为默认显示名称。"""
+    import secrets
+    return secrets.token_hex(16)
+
+
+def set_default_avatar() -> tuple[bool, str]:
+    """设置默认蜘蛛网头像。返回 (是否成功, 消息)。"""
+    profile = load_user_profile()
+    profile["avatar_b64"] = DEFAULT_AVATAR_B64
+    profile["avatar_mime"] = DEFAULT_AVATAR_MIME
+    profile["avatar_width"] = DEFAULT_AVATAR_WIDTH
+    profile["avatar_height"] = DEFAULT_AVATAR_HEIGHT
+    save_user_profile(profile)
+    return True, "默认头像已设置"
+
+
+def get_avatar_b64() -> str:
+    """获取当前头像 base64，如果未设置则返回默认头像。"""
+    profile = load_user_profile()
+    return profile.get("avatar_b64", DEFAULT_AVATAR_B64)
+
+
+def has_custom_avatar() -> bool:
+    """检查用户是否设置了自定义头像（非默认）。"""
+    profile = load_user_profile()
+    return bool(profile.get("avatar_b64")) and profile.get("avatar_b64") != DEFAULT_AVATAR_B64

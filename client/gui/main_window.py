@@ -24,8 +24,11 @@ from client.network.cross_server import CrossServerClient
 from client.crypto.keys import (
     generate_keypairs, save_identity, load_identity,
     delete_identity, get_display_name, set_display_name,
-    set_avatar, clear_avatar
+    set_avatar, clear_avatar, get_avatar_b64, has_custom_avatar,
+    set_default_avatar,
 )
+from client.experimental.manager import is_experimental_enabled, is_feature_enabled
+from client.api.server import bridge as api_bridge
 from client.crypto.encrypt import encrypt_message, decrypt_message, encrypt_file_data, decrypt_file_data
 from client.crypto.exchange import get_session_key, clear_all_sessions
 from client.utils.uuidgen import generate_uuid_v1
@@ -187,8 +190,132 @@ class MainWindow:
             self.ephemeral = None
             self.vault = None
 
+        self._register_api_callbacks()
         self._build_ui()
         self._connect_and_login()
+
+    def _register_api_callbacks(self):
+        """注册 HTTP API 桥接回调，让 API 服务器可以操控客户端。"""
+        api_bridge.register("get_profile", self._api_get_profile)
+        api_bridge.register("update_profile", self._api_update_profile)
+        api_bridge.register("get_settings", self._api_get_settings)
+        api_bridge.register("update_settings", self._api_update_settings)
+        api_bridge.register("get_contacts", self._api_get_contacts)
+        api_bridge.register("add_contact", self._api_add_contact)
+        api_bridge.register("delete_contact", self._api_delete_contact)
+        api_bridge.register("send_message", self._api_send_message)
+        api_bridge.register("get_message_history", self._api_get_message_history)
+        api_bridge.register("delete_message", self._api_delete_message)
+        api_bridge.register("get_deadman_config", self._api_get_deadman_config)
+        api_bridge.register("update_deadman_config", self._api_update_deadman_config)
+        api_bridge.register("get_groups", self._api_get_groups)
+        api_bridge.register("create_group", self._api_create_group)
+        api_bridge.register("send_file", self._api_send_file)
+        api_bridge.register("download_file", self._api_download_file)
+
+    # ===== API 回调方法 =====
+    def _api_get_profile(self, **kw):
+        return True, {
+            "uuid": self.uuid,
+            "mac_address": self.identity.get("mac_address", ""),
+            "display_name": get_display_name(),
+            "has_custom_avatar": has_custom_avatar(),
+        }, ""
+
+    def _api_update_profile(self, display_name="", **kw):
+        if display_name:
+            ok, msg = set_display_name(display_name)
+            return ok, None, msg
+        return False, None, "未提供 display_name"
+
+    def _api_get_settings(self, **kw):
+        return True, dict(self.config), ""
+
+    def _api_update_settings(self, **kwargs):
+        for k, v in kwargs.items():
+            self.config[k] = v
+        save_config(self.config)
+        return True, None, ""
+
+    def _api_get_contacts(self, **kw):
+        return True, [{"uuid": c.get("uuid"), "display_name": c.get("display_name", ""),
+                        "blocked": c.get("blocked", False)} for c in self.contacts], ""
+
+    def _api_add_contact(self, uuid="", display_name="", **kw):
+        if not uuid:
+            return False, None, "缺少 uuid"
+        self.contacts.append({"uuid": uuid, "display_name": display_name or uuid, "blocked": False})
+        from client.storage.identity import save_contacts
+        save_contacts(self.contacts)
+        return True, None, ""
+
+    def _api_delete_contact(self, uuid="", **kw):
+        self.contacts = [c for c in self.contacts if c.get("uuid") != uuid]
+        from client.storage.identity import save_contacts
+        save_contacts(self.contacts)
+        return True, None, ""
+
+    def _api_send_message(self, to_uuid="", text="", **kw):
+        if not to_uuid or not text:
+            return False, None, "缺少 to_uuid 或 text"
+        try:
+            self._send_text_to(to_uuid, text)
+            return True, None, ""
+        except Exception as e:
+            return False, None, str(e)
+
+    def _api_get_message_history(self, uuid="", limit=50, query=None, **kw):
+        if not uuid:
+            return False, None, "缺少 uuid"
+        msgs = self.msg_store.get_messages(uuid, limit=int(limit))
+        return True, [{"id": m.get("id"), "text": m.get("text", ""), "direction": m.get("direction"),
+                        "timestamp": m.get("timestamp")} for m in msgs], ""
+
+    def _api_delete_message(self, message_id="", **kw):
+        if not message_id:
+            return False, None, "缺少 message_id"
+        self.msg_store.delete_message(message_id)
+        return True, None, ""
+
+    def _api_get_deadman_config(self, **kw):
+        return True, self.deadman.get_config(), ""
+
+    def _api_update_deadman_config(self, enabled=None, warning_message="", recipient_uuid="", grace_days=None, **kw):
+        cfg = self.deadman.get_config()
+        self.deadman.set_config(
+            enabled=cfg["enabled"] if enabled is None else enabled,
+            warning_message=warning_message or cfg["warning_message"],
+            recipient_uuid=recipient_uuid or cfg["recipient_uuid"],
+            grace_days=grace_days if grace_days is not None else cfg["grace_days"],
+            auto_sync=True,
+        )
+        return True, None, ""
+
+    def _api_get_groups(self, **kw):
+        return True, getattr(self, "_my_groups", []), ""
+
+    def _api_create_group(self, name="", member_uuids=None, **kw):
+        if not name:
+            return False, None, "缺少 name"
+        try:
+            self.cross_server.create_group(name, member_uuids or [])
+            return True, None, ""
+        except Exception as e:
+            return False, None, str(e)
+
+    def _api_send_file(self, to_uuid="", file_path="", **kw):
+        if not to_uuid or not file_path:
+            return False, None, "缺少 to_uuid 或 file_path"
+        if not os.path.exists(file_path):
+            return False, None, f"文件不存在: {file_path}"
+        try:
+            self._send_file_to(to_uuid, file_path)
+            return True, None, ""
+        except Exception as e:
+            return False, None, str(e)
+
+    def _api_download_file(self, file_id="", **kw):
+        return False, None, "文件下载暂不支持通过 API"
 
     # ===== UI 构建 =====
     def _build_ui(self):
@@ -489,6 +616,25 @@ class MainWindow:
             font=("Arial", 9),
             command=lambda n=parsed["network"]: self._copy_to_clipboard(n, "网络已复制"))
         copy_net_btn.pack(side="left", padx=2)
+
+        # 跳转到 SpiderWallet（实验性功能启用时显示）
+        try:
+            from client.integration.spiderwallet import is_sw_enabled, open_in_sw, is_sw_running, launch_spiderwallet
+            if is_sw_enabled():
+                def _jump_to_sw(cur=parsed["currency"], addr=parsed["address"], net=parsed["network"]):
+                    if not is_sw_running():
+                        if not launch_spiderwallet():
+                            self._show_error("SpiderWallet 未运行，请先启动")
+                            return
+                    ok, msg = open_in_sw(cur, addr, net)
+                    self._show_info(msg) if ok else self._show_error(msg)
+                sw_btn = ctk.CTkButton(
+                    addr_row, text="🕷 SW", width=52, height=24,
+                    font=("Arial", 9), fg_color="#e94560",
+                    command=_jump_to_sw)
+                sw_btn.pack(side="left", padx=2)
+        except Exception:
+            pass
 
         # 完整地址提示（鼠标悬停可见）
         ctk.CTkLabel(card, text=f"网络: {parsed['network']}",
@@ -892,6 +1038,17 @@ class MainWindow:
         # 为货币和网络分别绑定补全
         make_completer(cur_entry, cur_var, currencies)
         make_completer(net_entry, net_var, networks)
+
+        # 地址自动补全（从 SpiderWallet 获取钱包地址）
+        try:
+            from client.integration.spiderwallet import is_sw_enabled, get_wallet_addresses
+            if is_sw_enabled():
+                wallet_addrs = get_wallet_addresses()
+                addr_suggestions = [a["address"] for a in wallet_addrs if a.get("address")]
+                if addr_suggestions:
+                    make_completer(addr_entry, addr_var, addr_suggestions)
+        except Exception:
+            pass
 
         def do_send():
             cur = cur_var.get().strip()
@@ -1453,8 +1610,26 @@ class MainWindow:
                      font=("Arial", 9), text_color="gray").pack(padx=10, pady=2)
 
         ctk.CTkLabel(win, text="── 个人资料 ──", font=("Arial", 12, "bold")).pack(pady=(15, 5))
+
+        # 头像预览
+        avatar_frame = ctk.CTkFrame(win)
+        avatar_frame.pack(fill="x", padx=10, pady=2)
+        try:
+            avatar_b64 = get_avatar_b64()
+            avatar_img = ctk.CTkImage(light_image=self._b64_to_image(avatar_b64), size=(48, 48))
+            avatar_label = ctk.CTkLabel(avatar_frame, image=avatar_img, text="")
+            avatar_label.image = avatar_img
+            avatar_label.pack(side="left", padx=10, pady=5)
+        except Exception:
+            ctk.CTkLabel(avatar_frame, text="[头像]", width=48, height=48).pack(side="left", padx=10, pady=5)
+
+        info_frame = ctk.CTkFrame(avatar_frame, fg_color="transparent")
+        info_frame.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(info_frame, text=f"UUID: {self.uuid}", font=("Consolas", 8), text_color="gray").pack(anchor="w")
+        ctk.CTkLabel(info_frame, text=f"MAC: {self.identity.get('mac_address', '')}", font=("Consolas", 8), text_color="gray").pack(anchor="w")
+
         current_name = get_display_name()
-        ctk.CTkLabel(win, text="显示名称 (4-32字节 UTF-8):").pack(anchor="w", padx=10)
+        ctk.CTkLabel(win, text="显示名称 (4-32字节 UTF-8):").pack(anchor="w", padx=10, pady=(5, 0))
         name_entry = ctk.CTkEntry(win, placeholder_text="输入显示名称")
         name_entry.pack(fill="x", padx=10, pady=2)
         if current_name:
@@ -1462,6 +1637,7 @@ class MainWindow:
         btn_row = ctk.CTkFrame(win)
         btn_row.pack(fill="x", padx=10, pady=5)
         ctk.CTkButton(btn_row, text="📷 设置头像", width=100, command=self._choose_avatar).pack(side="left", padx=5)
+        ctk.CTkButton(btn_row, text="🔄 恢复默认", width=100, command=self._restore_default_avatar).pack(side="left", padx=5)
         ctk.CTkButton(btn_row, text="🗑 清除头像", width=100, command=self._clear_avatar_btn).pack(side="left", padx=5)
         ctk.CTkButton(win, text="保存显示名称", width=120, command=lambda: self._save_display_name(name_entry.get())).pack(pady=5)
 
@@ -1470,6 +1646,23 @@ class MainWindow:
         ctk.CTkButton(win, text="🔍 搜索群聊", command=self._search_group_dialog).pack(pady=2)
         ctk.CTkButton(win, text="📋 我的群聊", command=lambda: self.cross_server.list_my_groups()).pack(pady=2)
         ctk.CTkButton(win, text="🔧 管理员登录", command=self._open_admin_panel).pack(pady=5)
+
+        # ===== 实验性功能 =====
+        ctk.CTkLabel(win, text="── 实验性功能 ──", font=("Arial", 12, "bold")).pack(pady=(15, 5))
+        exp_status = "已启用" if is_experimental_enabled() else "未启用"
+        exp_color = "green" if is_experimental_enabled() else "gray"
+        ctk.CTkLabel(win, text=f"状态: {exp_status}", text_color=exp_color).pack(pady=2)
+        ctk.CTkButton(win, text="⚗ 实验性功能管理", width=180,
+                       command=self._open_experimental_dialog).pack(pady=5)
+
+        # API 管理（仅实验性功能启用时显示）
+        if is_feature_enabled("http_api"):
+            ctk.CTkLabel(win, text="── HTTP API ──", font=("Arial", 12, "bold")).pack(pady=(15, 5))
+            api_status = f"运行中 (端口 {api_server.port})" if api_server.is_running else "未运行"
+            api_color = "green" if api_server.is_running else "gray"
+            ctk.CTkLabel(win, text=f"状态: {api_status}", text_color=api_color).pack(pady=2)
+            ctk.CTkButton(win, text="🔑 API 管理", width=180,
+                           command=self._open_api_dialog).pack(pady=5)
 
         def save():
             self.config["sent_message_color"] = sent_color.get() or DEFAULT_SENT_COLOR
@@ -1508,6 +1701,28 @@ class MainWindow:
 
     def _clear_avatar_btn(self):
         self._show_info("头像已清除") if clear_avatar() else self._show_error("清除头像失败")
+
+    def _restore_default_avatar(self):
+        ok, msg = set_default_avatar()
+        self._show_info(msg) if ok else self._show_error(msg)
+
+    def _b64_to_image(self, b64_str):
+        from PIL import Image
+        import io
+        img_data = base64.b64decode(b64_str)
+        return Image.open(io.BytesIO(img_data))
+
+    def _open_experimental_dialog(self):
+        from client.gui.experimental_dialog import ExperimentalDialog
+        ExperimentalDialog(self.root, on_features_changed=self._on_experimental_changed)
+
+    def _on_experimental_changed(self):
+        # 实验性功能变化时刷新设置窗口（如果打开着）
+        pass
+
+    def _open_api_dialog(self):
+        from client.gui.api_dialog import APIManagerDialog
+        APIManagerDialog(self.root, self.config)
 
     def _save_display_name(self, name: str):
         ok, msg = set_display_name(name.strip())

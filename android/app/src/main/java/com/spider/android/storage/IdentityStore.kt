@@ -33,6 +33,7 @@ class IdentityStore(context: Context) {
         val serverHost: String,
         val serverPort: Int,
         val displayName: String,
+        val avatarB64: String = "",
         val encryptionSalt: String,
         val duressSalt: String,
         val duressPinHash: String,
@@ -85,6 +86,7 @@ class IdentityStore(context: Context) {
             put("server_host", identity.serverHost)
             put("server_port", identity.serverPort)
             put("display_name", identity.displayName)
+            put("avatar_b64", identity.avatarB64)
             put("encryption_salt", Base64.encodeToString(salt, Base64.NO_WRAP))
             put("duress_salt", duressSalt)
             put("duress_pin_hash", duressHash)
@@ -133,7 +135,8 @@ class IdentityStore(context: Context) {
                 ed25519Private = Base64.encodeToString(ePriv, Base64.NO_WRAP),
                 serverHost = it.getString(it.getColumnIndexOrThrow("server_host")) ?: "",
                 serverPort = it.getInt(it.getColumnIndexOrThrow("server_port")),
-                displayName = it.getString(it.getColumnIndexOrThrow("display_name")) ?: ""
+                displayName = it.getString(it.getColumnIndexOrThrow("display_name")) ?: "",
+                avatarB64 = it.getString(it.getColumnIndexOrThrow("avatar_b64")) ?: ""
             )
         }
     }
