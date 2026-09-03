@@ -1,5 +1,9 @@
 # Spider
 
+<p align="center">
+  <img src="assets/logo.png" alt="Spider" width="160">
+</p>
+
 ## 项目简介
 
 Spider 是一个专注于安全与隐私的端到端加密通信系统，支持**互联网、局域网、P2P 直连、业余无线电（SDR）**以及 **Minecraft 游戏内**等多种通信渠道。它采用去中心化架构，结合去中心化服务器中继与点对点直连两种模式，为用户提供灵活、可靠且高度安全的通信体验。
