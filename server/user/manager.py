@@ -9,7 +9,6 @@ import json
 import time
 import uuid as uuid_module
 from server.config.loader import get_data_dir
-from server.utils import get_real_mac_for_server
 
 
 class UserManager:
@@ -73,19 +72,15 @@ class UserManager:
     def create_user_for_admin(self, name: str) -> dict | None:
         """
         管理员在服务器端创建用户。
-        强制 UUIDv1 + 真实 MAC。无回退。
+
+        注意：UUIDv1 的 node 字段本意是标识客户端物理设备，管理员在服务器上
+        代建用户时并不掌握该用户的设备 MAC，因此绝不能使用服务器 MAC。
+        这里改用 uuid4()（完全随机）生成，与真实设备无关且全局唯一。
+
         Returns dict with uuid + keypairs, or None on failure.
         """
-        try:
-            mac_int = get_real_mac_for_server()
-        except RuntimeError as e:
-            print(f"[USER] Cannot create user — MAC unavailable: {e}")
-            return None
-
-
-        u = uuid_module.uuid1(node=mac_int)
-        uuid_str = str(u)
-
+        # 使用随机 UUIDv4，不绑定任何服务器/设备 MAC。
+        uuid_str = str(uuid_module.uuid4())
 
         from cryptography.hazmat.primitives.asymmetric import x25519, ed25519
         from cryptography.hazmat.primitives import serialization
@@ -114,22 +109,21 @@ class UserManager:
             )).decode(),
         }
 
-
+        # 管理员代建的用户尚未绑定真实客户端设备，mac_address 留空。
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
         c.execute(
             """INSERT INTO users (uuid, name, x25519_pub, ed25519_pub, mac_address, registered_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (uuid_str, name, keys["x25519_public"], keys["ed25519_public"],
-             ":".join(f"{(mac_int >> (i*8)) & 0xff:02x}" for i in range(5, -1, -1)),
-             int(time.time()))
+             "", int(time.time()))
         )
         conn.commit()
         conn.close()
 
         result = {"uuid": uuid_str, "name": name}
         result.update(keys)
-        print(f"[USER] Created user '{name}' with UUID {uuid_str[:16]}...")
+        print(f"[USER] 管理员创建用户 '{name}'，UUID {uuid_str[:16]}...（UUIDv4 随机）")
         return result
 
 

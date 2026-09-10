@@ -8,6 +8,7 @@ import os
 import time
 import json
 from server.config.loader import get_data_dir
+from shared.protocol import DEFAULT_FILE_RETENTION_DAYS
 
 
 class OfflineStore:

@@ -27,7 +27,8 @@ class ForumWindow(ctk.CTkToplevel):
         self.user_pubkey = user_pubkey
         self.current_posts = []
         self.current_post = None
-        self.current_comments = {"roots": [], "replies": {}}
+        # 服务端新 API：评论为扁平列表，每条含 parent_id / reply_to_username
+        self.current_comments = []
         self.search_mode = False
         self.current_sort = "hot"
 
@@ -275,24 +276,23 @@ class ForumWindow(ctk.CTkToplevel):
         self._render_comments()
 
     def _render_comments(self):
+        """按服务端返回顺序扁平渲染评论（不做缩进分层）。"""
         for w in self.comments_container.winfo_children():
             w.destroy()
 
-        roots = self.current_comments.get("roots", [])
-        replies = self.current_comments.get("replies", {})
+        comments = self.current_comments if isinstance(self.current_comments, list) else []
 
-        if not roots:
+        if not comments:
             ctk.CTkLabel(self.comments_container, text="暂无评论", text_color="gray").pack(pady=10)
             return
 
-        for root in roots:
-            self._render_comment(root, self.comments_container, depth=0)
-            for reply in replies.get(root["id"], []):
-                self._render_comment(reply, self.comments_container, depth=1)
+        for comment in comments:
+            self._render_comment(comment, self.comments_container)
 
-    def _render_comment(self, comment, parent, depth=0):
+    def _render_comment(self, comment, parent):
         frame = ctk.CTkFrame(parent, corner_radius=4)
-        frame.pack(fill="x", pady=2, padx=(depth * 20, 0))
+        # 扁平显示：不按回复关系缩进分层
+        frame.pack(fill="x", pady=2, padx=(0, 0))
 
         header = ctk.CTkFrame(frame, fg_color="transparent")
         header.pack(fill="x", padx=6, pady=(4, 0))
@@ -303,6 +303,14 @@ class ForumWindow(ctk.CTkToplevel):
                      font=ctk.CTkFont(size=10), text_color="gray").pack(side="left")
         if comment.get("edited"):
             ctk.CTkLabel(header, text=" (已编辑)", font=ctk.CTkFont(size=10), text_color="orange").pack(side="left")
+
+        # 回复关系标识：若有 parent_id，头部显示「回复 @用户名」
+        if comment.get("parent_id"):
+            reply_to = comment.get("reply_to_username") or ""
+            if not reply_to:
+                reply_to = str(comment.get("parent_id", ""))[:12]
+            ctk.CTkLabel(header, text=f" ↩ 回复 @{reply_to}",
+                         font=ctk.CTkFont(size=10), text_color="#3498db").pack(side="left", padx=(6, 0))
 
         ctk.CTkLabel(frame, text=comment.get("content", ""), font=ctk.CTkFont(size=12),
                      anchor="w", justify="left", wraplength=480).pack(anchor="w", padx=6, pady=2)
@@ -376,7 +384,8 @@ class ForumWindow(ctk.CTkToplevel):
             self.forum.list_comments(self.current_post["id"])
 
     def _on_comment_list(self, msg):
-        self.current_comments = {"roots": msg.get("roots", []), "replies": msg.get("replies", {})}
+        # 服务端新 API：扁平 {"comments": [...]}，按热度排序
+        self.current_comments = ForumClient.extract_comments(msg)
         if hasattr(self, "comments_container"):
             self._render_comments()
 

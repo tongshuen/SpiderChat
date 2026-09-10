@@ -19,6 +19,10 @@ import org.json.JSONObject
  *
  * 发帖页顶部醒目警示：帖子评论明文存储，管理员可查看删除导出，
  * 等同于公开发布，不可否认，敏感信息请移步私聊。
+ *
+ * 评论采用扁平展示：服务端返回 {"comments": [...]}，按热度排序，
+ * 每条评论含 parent_id 和 reply_to_username。不做缩进分层，
+ * 仅在评论头部显示"回复 @用户名"。
  */
 class ForumFragment : Fragment() {
 
@@ -46,6 +50,10 @@ class ForumFragment : Fragment() {
     private var currentPost: JSONObject? = null
     private var currentSort = "hot"
     private var searchMode = false
+
+    // 当前被回复的评论（parent_id），null 表示发表顶级评论
+    private var replyParentId: String? = null
+    private var replyUsername: String? = null
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -144,6 +152,8 @@ class ForumFragment : Fragment() {
 
     private fun openPostDetail(post: JSONObject) {
         currentPost = post
+        replyParentId = null
+        replyUsername = null
         listContainer.visibility = View.GONE
         detailContainer.visibility = View.VISIBLE
         renderPostDetail(post)
@@ -164,6 +174,8 @@ class ForumFragment : Fragment() {
 
     private fun backToList() {
         currentPost = null
+        replyParentId = null
+        replyUsername = null
         detailContainer.visibility = View.GONE
         listContainer.visibility = View.VISIBLE
     }
@@ -188,9 +200,24 @@ class ForumFragment : Fragment() {
             put("type", "COMMENT_CREATE")
             put("post_id", post.optString("id"))
             put("content", content)
+            // 回复评论时携带 parent_id
+            replyParentId?.let { put("parent_id", it) }
         }
         sendForumMessage(req)
         commentInput.setText("")
+        // 清除回复状态
+        replyParentId = null
+        replyUsername = null
+        commentInput.hint = "发表评论..."
+    }
+
+    /** 点击某条评论，设置为回复目标 */
+    private fun onCommentClicked(comment: JSONObject) {
+        replyParentId = comment.optString("id", "")
+        replyUsername = comment.optString("reply_to_username", "")
+        val author = comment.optString("author_uuid", "").take(10)
+        commentInput.hint = "回复 @$author..."
+        commentInput.requestFocus()
     }
 
     // ===== UI 渲染 =====
@@ -207,28 +234,19 @@ class ForumFragment : Fragment() {
         downvoteBtn.text = "👎 $down"
     }
 
-    private fun renderComments(roots: JSONArray, replies: JSONObject) {
+    /**
+     * 扁平渲染评论列表。
+     * 新 API 格式：{"comments": [{"id":..., "parent_id":..., "reply_to_username":..., "content":...}, ...]}
+     * 按服务端返回顺序扁平显示，不做缩进分层。
+     */
+    private fun renderComments(comments: JSONArray) {
         commentList.removeAllViews()
-        for (i in 0 until roots.length()) {
-            val root = roots.getJSONObject(i)
-            commentList.addView(createCommentView(root, 0))
-            val replyArr = replies.optJSONArray(root.optString("id"))
-            if (replyArr != null) {
-                for (j in 0 until replyArr.length()) {
-                    commentList.addView(createCommentView(replyArr.getJSONObject(j), 1))
-                }
-            }
+        for (i in 0 until comments.length()) {
+            val comment = comments.optJSONObject(i) ?: continue
+            val view = PostAdapter.buildCommentView(requireContext(), comment)
+            view.setOnClickListener { onCommentClicked(comment) }
+            commentList.addView(view)
         }
-    }
-
-    private fun createCommentView(comment: JSONObject, depth: Int): View {
-        val tv = TextView(requireContext()).apply {
-            val author = comment.optString("author_uuid", "").take(10)
-            text = "${if (depth > 0) "  └ " else ""}$author: ${comment.optString("content", "")}"
-            textSize = 13f
-            setPadding(20 + depth * 30, 8, 20, 8)
-        }
-        return tv
     }
 
     // ===== 发帖对话框 =====
@@ -285,9 +303,9 @@ class ForumFragment : Fragment() {
                 }
             }
             "COMMENT_LIST_RESULT" -> {
-                val roots = msg.optJSONArray("roots") ?: JSONArray()
-                val replies = msg.optJSONObject("replies") ?: JSONObject()
-                renderComments(roots, replies)
+                // 新 API：扁平 comments 列表，按热度排序
+                val comments = msg.optJSONArray("comments") ?: JSONArray()
+                renderComments(comments)
             }
             "POST_CREATE_RESULT" -> {
                 loadPosts()

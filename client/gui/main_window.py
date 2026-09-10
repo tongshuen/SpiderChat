@@ -621,13 +621,35 @@ class MainWindow:
 
         # 跳转到 SpiderWallet（实验性功能启用时显示）
         try:
-            from client.integration.spiderwallet import is_sw_enabled, open_in_sw, is_sw_running, launch_spiderwallet
+            from client.integration.spiderwallet import (
+                is_sw_enabled, open_in_sw, is_sw_running,
+                get_supported_chains, is_chain_supported, SWNotRunningError,
+            )
             if is_sw_enabled():
                 def _jump_to_sw(cur=parsed["currency"], addr=parsed["address"], net=parsed["network"]):
+                    # 1) 先确认 SpiderWallet 正在运行（连接失败则不跳转）
                     if not is_sw_running():
-                        if not launch_spiderwallet():
-                            self._show_error("SpiderWallet 未运行，请先启动")
-                            return
+                        messagebox.showwarning(
+                            "SpiderWallet 未运行",
+                            "无法连接 SpiderWallet，请先启动 SpiderWallet",
+                        )
+                        return
+                    # 2) 拉取 SW 已支持的链/币列表
+                    try:
+                        supported = get_supported_chains()
+                    except SWNotRunningError:
+                        messagebox.showwarning(
+                            "SpiderWallet 未运行",
+                            "无法连接 SpiderWallet，请先启动 SpiderWallet",
+                        )
+                        return
+                    # 3) 校验当前卡片的链/币是否被支持
+                    if not is_chain_supported(net, cur, supported):
+                        messagebox.showwarning(
+                            "暂不支持",
+                            "SpiderWallet 尚未支持此链/币，请先前往 SpiderWallet 配置",
+                        )
+                        return
                     ok, msg = open_in_sw(cur, addr, net)
                     self._show_info(msg) if ok else self._show_error(msg)
                 sw_btn = ctk.CTkButton(
@@ -661,7 +683,8 @@ class MainWindow:
             if not exist:
                 self._message_widgets.append({
                     "widget": outer, "msg_id": msg_id,
-                    "receipt_sent": False, "top_seen": False, "bottom_seen": False
+                    "receipt_sent": False,
+                    "head_ever_visible": False, "tail_ever_visible": False
                 })
 
         self._scroll_chat_to_bottom()
@@ -728,7 +751,8 @@ class MainWindow:
             if not exist:
                 self._message_widgets.append({
                     "widget": outer, "msg_id": msg_id,
-                    "receipt_sent": False, "top_seen": False, "bottom_seen": False
+                    "receipt_sent": False,
+                    "head_ever_visible": False, "tail_ever_visible": False
                 })
         self._scroll_chat_to_bottom()
         return outer
@@ -803,7 +827,8 @@ class MainWindow:
                 if not exist:
                     self._message_widgets.append({
                         "widget": outer, "msg_id": msg_id,
-                        "receipt_sent": False, "top_seen": False, "bottom_seen": False
+                        "receipt_sent": False,
+                        "head_ever_visible": False, "tail_ever_visible": False
                     })
         self._scroll_chat_to_bottom()
 
@@ -1094,14 +1119,22 @@ class MainWindow:
                 if widget_height <= 0:
                     continue
                 canvas_y = inner_y + widget_y
+                # 头部曾经进入过视口（只需曾经出现，不要求当前仍可见）
                 if canvas_y >= 0 and canvas_y <= canvas_height:
-                    item["top_seen"] = True
+                    item["head_ever_visible"] = True
                 bottom_y = canvas_y + widget_height
+                # 尾部曾经进入过视口（只需曾经出现，不要求当前仍可见）
                 if bottom_y >= 0 and bottom_y <= canvas_height:
-                    item["bottom_seen"] = True
-                if item["top_seen"] and item["bottom_seen"] and not item["receipt_sent"]:
+                    item["tail_ever_visible"] = True
+                # 头和尾都【曾经出现过】即可发送已读回执，
+                # 不要求头和尾当前同时可见（修复超长消息永远不发回执的问题）
+                if (item["head_ever_visible"] and item["tail_ever_visible"]
+                        and not item["receipt_sent"]):
                     self._send_read_receipt(self.current_contact, item["msg_id"])
                     item["receipt_sent"] = True
+                    # 发送后重置两个标志位
+                    item["head_ever_visible"] = False
+                    item["tail_ever_visible"] = False
         except Exception as e:
             print(f"[VISIBLE] Check error: {e}")
 
@@ -1137,8 +1170,8 @@ class MainWindow:
         for item in self._message_widgets:
             if item["msg_id"] in server_ids:
                 item["receipt_sent"] = True
-                item["top_seen"] = True
-                item["bottom_seen"] = True
+                item["head_ever_visible"] = True
+                item["tail_ever_visible"] = True
                 self._update_receipt_display(item["msg_id"], "read")
         self._show_info(f"已标记 {count} 条消息为已读")
 

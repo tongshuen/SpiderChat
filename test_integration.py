@@ -88,6 +88,13 @@ Link = link_mod.Link
 LinkMode = link_mod.LinkMode
 public = Link.public()
 mesh = Link.radio_mesh()
+# 注入真实传输回调（去占位后必须注入，否则显式 RuntimeError）
+_sent = []
+def _mock_transport(payload: bytes) -> bool:
+    _sent.append(payload)
+    return True
+public.set_public_transport(_mock_transport)
+mesh.set_public_transport(_mock_transport)
 check("公网链路可构造", public.send(b"x"))
 check("无线电网络链路可构造（桥接到公网）", mesh.send(b"x"))
 

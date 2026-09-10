@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+PackUp.py
+packed_archive.txt
+.idea/
+.vscode/
+*.iml
+data/*.db
+data/*.db-journal
+data/*.lock
+*.log

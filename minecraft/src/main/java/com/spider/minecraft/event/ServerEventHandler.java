@@ -119,17 +119,7 @@ public class ServerEventHandler {
             case Protocol.COMPROMISED -> handleCompromised(obj);
             case Protocol.FILE_SEND -> handleFileReceive(obj);
             default -> {
-                // 论坛消息路由到 SpiderMainScreen
-                if (type.startsWith("POST_") || type.startsWith("COMMENT_") || type.startsWith("VOTE_") ||
-                    type.startsWith("SERVER_") || type.startsWith("LOAD_") || type.startsWith("NOTIFICATION_") ||
-                    type.startsWith("REPORT_") || type.startsWith("DRAFT_") || type.startsWith("FORUM_PROFILE_") ||
-                    type.startsWith("CROSS_")) {
-                    if (net.minecraft.client.Minecraft.getInstance().screen instanceof com.spider.minecraft.gui.SpiderMainScreen sms) {
-                        sms.handleForumMessage(obj);
-                    }
-                } else {
-                    LOGGER.debug("[SpiderMinecraft] Unknown direct message type: {}", type);
-                }
+                LOGGER.debug("[SpiderMinecraft] Unknown direct message type: {}", type);
             }
         }
     }

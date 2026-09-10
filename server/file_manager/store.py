@@ -6,6 +6,7 @@ import os
 import time
 import sqlite3
 from server.config.loader import get_data_dir
+from shared.protocol import DEFAULT_MAX_FILE_MB, DEFAULT_FILE_RETENTION_DAYS
 
 
 class FileManager:

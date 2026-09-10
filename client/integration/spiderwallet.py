@@ -70,6 +70,79 @@ def get_wallet_addresses() -> list:
         return []
 
 
+class SWNotRunningError(Exception):
+    """无法连接到 SpiderWallet（未启动 / 端口不通）。"""
+
+
+def get_supported_chains(timeout: float = 3.0) -> list:
+    """
+    调用 SpiderWallet 的 GET /api/supported_chains，获取 SW 已支持的链/币列表。
+
+    返回归一化后的链字典列表，每项至少包含 chain_id / symbol / name 字段
+    （缺失字段用空串兜底）。无论 SW 返回 {"chains": [...]} 还是顶层即列表，
+    都做容错归一化。
+
+    异常：
+        SWNotRunningError  当连接失败（SW 未启动 / 端口不可达）时抛出，
+                           调用方据此提示"无法连接 SpiderWallet"。
+    """
+    cfg = _get_sw_config()
+    try:
+        url = f"http://{cfg['host']}:{cfg['port']}/api/supported_chains"
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+    except Exception as e:
+        raise SWNotRunningError(f"无法连接 SpiderWallet: {e}") from e
+
+    raw_list = data.get("chains", data) if isinstance(data, dict) else data
+    if not isinstance(raw_list, list):
+        return []
+
+    chains = []
+    for item in raw_list:
+        if isinstance(item, str):
+            # 纯字符串列表：当作 chain_id
+            chains.append({"chain_id": item, "symbol": "", "name": item})
+        elif isinstance(item, dict):
+            chains.append({
+                "chain_id": str(item.get("chain_id", item.get("chain", "")) or ""),
+                "symbol": str(item.get("symbol", item.get("currency", "")) or ""),
+                "name": str(item.get("name", item.get("network", "")) or ""),
+            })
+    return chains
+
+
+def is_chain_supported(network: str, currency: str,
+                       supported: Optional[list] = None) -> bool:
+    """
+    判断指定链/币是否被 SpiderWallet 支持。
+
+    匹配规则（大小写不敏感）：
+      - network（链名，如 "Bitcoin"）匹配任一支持项的 chain_id / name；
+      - currency（币种符号，如 "BTC"）匹配任一支持项的 symbol。
+    任一侧命中即视为支持（链或币其一可识别）。
+    """
+    if supported is None:
+        try:
+            supported = get_supported_chains()
+        except SWNotRunningError:
+            # 调用方应在连接失败时单独处理；这里保守返回 False
+            return False
+    net = (network or "").strip().lower()
+    cur = (currency or "").strip().lower()
+    if not net and not cur:
+        return False
+    for item in supported:
+        chain_id = str(item.get("chain_id", "")).lower()
+        symbol = str(item.get("symbol", "")).lower()
+        name = str(item.get("name", "")).lower()
+        if net and (net == chain_id or net == name or net in (chain_id, name)):
+            return True
+        if cur and (cur == symbol or cur == chain_id or cur == name):
+            return True
+    return False
+
+
 def open_in_sw(currency: str, address: str, network: str) -> tuple:
     """
     发送加密卡片信息到 SpiderWallet（跳转到 SW）。

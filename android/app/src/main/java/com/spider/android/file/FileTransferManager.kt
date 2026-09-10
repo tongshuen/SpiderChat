@@ -151,7 +151,7 @@ class FileTransferManager(
                 isFile = true,
                 fileName = fileName,
                 filePath = savedPath,
-                fileSize = fileData.size,
+                fileSize = fileData.size.toLong(),
                 mimeType = mimeType,
                 deliveryStatus = "delivered"
             )

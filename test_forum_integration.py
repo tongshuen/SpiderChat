@@ -125,7 +125,7 @@ class TestComments(unittest.TestCase):
         db_mod._db_instance = None
 
     def test_comment_two_level(self):
-        """评论两层结构：根评论和回复。"""
+        """树状任意深度：根评论和回复都在扁平列表中，带 reply_to_username。"""
         from server.forum.posts import create_post
         from server.forum.comments import create_comment, list_comments
 
@@ -136,11 +136,51 @@ class TestComments(unittest.TestCase):
         c2 = create_comment("node1", post["id"], "user3", "Reply", c1["id"], "sig", "ssig", "pub")
 
         result = list_comments(post["id"])
-        self.assertEqual(len(result["roots"]), 1)
-        self.assertEqual(len(result["replies"].get(c1["id"], [])), 1)
+        # 新扁平格式：返回 {"comments": [...]}，根+回复都在内
+        self.assertIn("comments", result)
+        self.assertEqual(len(result["comments"]), 2)
+        ids = {c["id"] for c in result["comments"]}
+        self.assertEqual(ids, {c1["id"], c2["id"]})
+        # 回复指向根评论作者
+        reply = next(c for c in result["comments"] if c["id"] == c2["id"])
+        self.assertEqual(reply["parent_id"], c1["id"])
+        self.assertEqual(reply["reply_to_username"], "user2")
+        # 根评论没有 reply_to
+        root = next(c for c in result["comments"] if c["id"] == c1["id"])
+        self.assertEqual(root["reply_to_username"], "")
+        # reply_count 正确
+        self.assertEqual(root["reply_count"], 1)
+        self.assertEqual(reply["reply_count"], 0)
+
+    def test_comment_deep_nesting(self):
+        """任意深度：对回复再回复。"""
+        from server.forum.posts import create_post
+        from server.forum.comments import create_comment, list_comments
+
+        post = create_post("node1", "user1", "Test", "Content", [], "sig", "ssig", "pub")
+        c1 = create_comment("node1", post["id"], "user2", "root", "", "sig", "ssig", "pub")
+        c2 = create_comment("node1", post["id"], "user3", "lvl2", c1["id"], "sig", "ssig", "pub")
+        c3 = create_comment("node1", post["id"], "user4", "lvl3", c2["id"], "sig", "ssig", "pub")
+        result = list_comments(post["id"])
+        self.assertEqual(len(result["comments"]), 3)
+        lvl3 = next(c for c in result["comments"] if c["id"] == c3["id"])
+        self.assertEqual(lvl3["parent_id"], c2["id"])
+        self.assertEqual(lvl3["reply_to_username"], "user3")
+
+    def test_comment_reject_cross_post_reply(self):
+        """跨帖子回复被拒绝。"""
+        from server.forum.posts import create_post
+        from server.forum.comments import create_comment, list_comments
+
+        p1 = create_post("node1", "user1", "P1", "c", [], "sig", "ssig", "pub")
+        p2 = create_post("node1", "user1", "P2", "c", [], "sig", "ssig", "pub")
+        c1 = create_comment("node1", p1["id"], "user2", "root", "", "sig", "ssig", "pub")
+        # 试图在 p2 下回复 p1 的评论
+        bad = create_comment("node1", p2["id"], "user3", "reply", c1["id"], "sig", "ssig", "pub")
+        self.assertIsNone(bad)
 
     def test_comment_tombstone_no_cascade(self):
-        """删除为墓碑不级联。"""
+        """删除为墓碑不级联；回复仍保留并标记父作者为已删除用户。"""
         from server.forum.posts import create_post
         from server.forum.comments import create_comment, delete_comment, list_comments
 
@@ -151,8 +191,12 @@ class TestComments(unittest.TestCase):
         # 删除根评论，回复应保留
         delete_comment(c1["id"], "user2")
         result = list_comments(post["id"])
-        # 根评论被删除（墓碑），不显示
-        self.assertEqual(len(result["roots"]), 0)
+        # 根评论被删除（墓碑），不显示；回复仍在
+        self.assertEqual(len(result["comments"]), 1)
+        reply = result["comments"][0]
+        self.assertEqual(reply["id"], c2["id"])
+        # 父评论已删除 → 父作者显示"已删除用户"
+        self.assertEqual(reply["reply_to_username"], "已删除用户")
 
     def test_comment_edit_marker(self):
         """编辑显示已编辑标记。"""

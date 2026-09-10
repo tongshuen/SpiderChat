@@ -5,8 +5,11 @@
 import hashlib
 import time
 import base64
+import threading
+import os
 import uuid as uuid_module
 from server.keyring_store.credentials import verify_admin_pin, get_keyring_service
+from shared.protocol import SESSION_TIMEOUT_MIN, MAX_LOGIN_ATTEMPTS, LOCKOUT_SEC
 import keyring
 
 
@@ -107,7 +110,3 @@ class AdminAuth:
     def active_sessions(self) -> int:
         with self._sessions_lock:
             return len(self._sessions)
-
-
-import threading
-import os

@@ -35,25 +35,81 @@ def is_collection_text(text: str) -> bool:
     return text.startswith(COLLECTION_TAG + ":")
 
 
+# ===== 冒号转义 =====
+# 字段值（货币/地址/网络）本身可能含冒号（如 "bitcoin:bc1q..." URI、
+# "ethereum:mainnet:0x..." 多段网络名）。发送时把字段内的字面冒号转义为
+# "\:"，解析时把未转义的 ":" 当作分隔符、把 "\:" 还原为字面冒号。
+_ESCAPE_CHAR = "\\"
+_FIELD_SEP = ":"
+
+
+def escape_field(value: str) -> str:
+    """对字段值做转义：反斜杠先转义，再把冒号转义为 '\\:'。"""
+    if not isinstance(value, str):
+        return ""
+    return value.replace(_ESCAPE_CHAR, _ESCAPE_CHAR + _ESCAPE_CHAR).replace(
+        _FIELD_SEP, _ESCAPE_CHAR + _FIELD_SEP)
+
+
+def _split_unescaped(text: str, maxsplit: int = -1) -> list:
+    """按【未转义】的冒号切分；'\\:' 视为字面冒号（并还原）。
+
+    maxsplit 含义同 str.split（-1 表示不限次数）。
+    """
+    parts = []
+    cur = []
+    i = 0
+    n = len(text)
+    used = 0
+    while i < n:
+        ch = text[i]
+        if ch == _ESCAPE_CHAR and i + 1 < n:
+            nxt = text[i + 1]
+            if nxt == _FIELD_SEP:
+                # 转义冒号 -> 字面冒号
+                cur.append(_FIELD_SEP)
+                i += 2
+                continue
+            if nxt == _ESCAPE_CHAR:
+                # 转义反斜杠 -> 字面反斜杠
+                cur.append(_ESCAPE_CHAR)
+                i += 2
+                continue
+        if ch == _FIELD_SEP and (maxsplit < 0 or used < maxsplit):
+            parts.append("".join(cur))
+            cur = []
+            used += 1
+            i += 1
+            continue
+        cur.append(ch)
+        i += 1
+    parts.append("".join(cur))
+    return parts
+
+
 def parse_collection(text: str) -> dict | None:
     """
     解析 Collection 文本。
     返回 {tag, currency, address, network} 或 None（格式不合法时）。
+
+    分隔冒号为未转义的 ':'；字段值中的 '\\:' 还原为字面冒号，
+    因此地址/网络名里含冒号（如 "bitcoin:bc1q..."）也能正确解析。
     """
     if not is_collection_text(text):
         return None
-    # Collection:货币:地址:网络  —— 地址中可能含冒号极少，但按 4 段切分
-    parts = text.split(":", 3)
-    if len(parts) != 4:
+    # 去掉 "Collection:" 前缀后，剩余应为 currency:address:network 三段
+    body = text[len(COLLECTION_TAG) + 1:]
+    parts = _split_unescaped(body, maxsplit=2)
+    if len(parts) != 3:
         return None
-    tag, currency, address, network = parts
-    currency = currency.strip()
-    address = address.strip()
-    network = network.strip()
+    tag = COLLECTION_TAG
+    currency = parts[0].strip()
+    address = parts[1].strip()
+    network = parts[2].strip()
     if not currency or not address or not network:
         return None
     return {
-        "tag": tag.strip(),
+        "tag": tag,
         "currency": currency,
         "address": address,
         "network": network,
@@ -61,8 +117,12 @@ def parse_collection(text: str) -> dict | None:
 
 
 def build_collection_text(currency: str, address: str, network: str) -> str:
-    """由字段组装 Collection 明文（用于发送前填入输入框/直接发送）。"""
-    return f"{COLLECTION_TAG}:{currency.strip()}:{address.strip()}:{network.strip()}"
+    """由字段组装 Collection 明文（用于发送前填入输入框/直接发送）。
+
+    字段内的冒号会被转义为 '\\:'，保证接收端能按分隔冒号正确切回。
+    """
+    return (f"{COLLECTION_TAG}:{escape_field(currency.strip())}:"
+            f"{escape_field(address.strip())}:{escape_field(network.strip())}")
 
 
 def crypto_data_path() -> str:

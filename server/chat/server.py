@@ -86,12 +86,14 @@ class ChatServer:
             except Exception as e:
                 print(f"[Forum] 初始化失败: {e}")
 
-        keys = get_server_keys()
-        self.server_x25519_priv = None
-        self.server_x25519_pub = keys["server_x25519_pub"]
-        self.server_ed25519_priv_b64 = keys["server_ed25519_priv"]
-        self.server_ed25519_pub = keys["server_ed25519_pub"]
-        self.node_id = get_node_id()
+        keys = get_server_keys() or {}
+        # 保留服务器 X25519 私钥（用于把 group_key 密封分发给群成员）。
+        self.server_x25519_priv_b64 = keys.get("server_x25519_priv") or None
+        self.server_x25519_pub = keys.get("server_x25519_pub", "")
+        self.server_ed25519_priv_b64 = keys.get("server_ed25519_priv", "")
+        self.server_ed25519_pub = keys.get("server_ed25519_pub", "")
+        self.node_id = get_node_id() or ""
+        self._maintenance_mode = False
 
         self.connections: dict[str, ClientConnection] = {}
         self.sock_by_addr: dict = {}
@@ -235,6 +237,47 @@ class ChatServer:
                     conn.sock.close()
                 except:
                     pass
+
+    def set_dht_node(self, dht_node):
+        """由 main.py 注入 DHT 节点。"""
+        self.dht_node = dht_node
+
+    def set_cross_server(self, cross_server):
+        """由 main.py 注入跨服中继。"""
+        self.cross_server = cross_server
+
+    def get_stats(self) -> dict:
+        """返回服务器运行统计（供管理员面板）。"""
+        with self.lock:
+            online = len(self.connections)
+        uptime = time.time() - self.stats.get("start_time", time.time())
+        stats = dict(self.stats)
+        stats["online_connections"] = online
+        stats["uptime_seconds"] = int(uptime)
+        stats["node_id"] = self.node_id
+        stats["maintenance_mode"] = bool(getattr(self, "_maintenance_mode", False))
+        if self.cross_server is not None:
+            try:
+                stats["cross_server"] = self.cross_server.get_stats()
+            except Exception:
+                pass
+        return stats
+
+    def broadcast(self, text: str):
+        """向所有在线用户广播一条系统消息。"""
+        msg = {
+            "type": RECV_MSG,
+            "from_uuid": self.node_id,
+            "to_uuid": "*",
+            "system_broadcast": True,
+            "system_message": text,
+            "timestamp": int(time.time()),
+        }
+        with self.lock:
+            conns = list(self.connections.values())
+        for conn in conns:
+            self._send_raw(conn, msg)
+        print(f"[CHAT] 已向 {len(conns)} 个在线连接广播消息")
 
     # ===== 客户端处理 =====
 
@@ -458,10 +501,22 @@ class ChatServer:
 
         self.user_manager.update_last_seen(uuid_str, conn.addr[0])
 
+        # 死人开关：登录即重置宽限期计时，防止正常在线用户误触发。
+        try:
+            self.offline_store.update_deadman_checkin(uuid_str)
+        except Exception as e:
+            print(f"[CHAT] Deadman checkin 失败: {e}")
+
         offline = self.offline_store.get_messages(uuid_str)
         if offline:
             self._send_raw(conn, {"type": OFFLINE_QUEUE, "messages": offline})
             self.offline_store.clear_messages(uuid_str)
+
+        # 补推离线期间暂存的 group_key
+        try:
+            self.group_manager.flush_pending_group_keys(uuid_str)
+        except Exception as e:
+            print(f"[CHAT] 补推 group_key 失败: {e}")
 
         self._send_raw(conn, {"type": "LOGIN_OK", "uuid": uuid_str})
         print(f"[CHAT] Login: {uuid_str[:16]}... from {conn.addr}")
@@ -857,13 +912,14 @@ class ChatServer:
         if not name:
             self._send_raw(conn, {"type": GROUP_CREATE_RESULT, "status": "error", "reason": "No name"})
             return
-        result = self.group_manager.create_group(name, conn.uuid, members, federated)
+        # 正确传参：name, owner_uuid, server_node_id, member_uuids, federated
+        group_id = self.group_manager.create_group(name, conn.uuid, self.node_id, members, federated)
         self._send_raw(conn, {"type": GROUP_CREATE_RESULT, "status": "created",
-                              "group_id": result.get("group_id", ""), "name": name})
+                              "group_id": group_id, "name": name})
 
     def _handle_join_group(self, conn: ClientConnection, msg: dict):
         group_id = msg.get("group_id", "")
-        result = self.group_manager.join_group(group_id, conn.uuid)
+        result = self.group_manager.join_group(group_id, conn.uuid, self.node_id)
         self._send_raw(conn, {"type": "JOIN_GROUP_RESULT", "result": result})
 
     def _handle_leave_group(self, conn: ClientConnection, msg: dict):
@@ -874,14 +930,16 @@ class ChatServer:
     def _handle_group_add_member(self, conn: ClientConnection, msg: dict):
         group_id = msg.get("group_id", "")
         target = msg.get("target_uuid", "")
-        result = self.group_manager.add_member(group_id, conn.uuid, target)
-        self._send_raw(conn, {"type": "GROUP_ADD_RESULT", "result": result})
+        # 正确传参：把 target 作为被加入者，conn.uuid 作为操作者
+        ok = self.group_manager.add_member(group_id, target, conn.uuid, self.node_id)
+        self._send_raw(conn, {"type": "GROUP_ADD_RESULT", "result": {"ok": bool(ok)}})
 
     def _handle_group_remove_member(self, conn: ClientConnection, msg: dict):
         group_id = msg.get("group_id", "")
         target = msg.get("target_uuid", "")
-        result = self.group_manager.remove_member(group_id, conn.uuid, target)
-        self._send_raw(conn, {"type": "GROUP_REMOVE_RESULT", "result": result})
+        # 正确传参：把 target 作为被移除者，conn.uuid 作为操作者
+        ok = self.group_manager.remove_member(group_id, target, conn.uuid)
+        self._send_raw(conn, {"type": "GROUP_REMOVE_RESULT", "result": {"ok": bool(ok)}})
 
     def _handle_send_group_message(self, conn: ClientConnection, msg: dict):
         group_id = msg.get("group_id", "")

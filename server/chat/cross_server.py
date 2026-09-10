@@ -80,6 +80,9 @@ class CrossServerRelay:
         self.cache_lock = threading.Lock()
 
         self.pending_messages: dict[str, list] = defaultdict(list)
+        # 同步 RPC 挂起表：request_id -> {"event", "response"}
+        self._pending_rpc: dict[str, dict] = {}
+        self._rpc_lock = threading.Lock()
 
         self._peer_rate_cache: dict[str, dict] = {}
         self._rate_cache_lock = threading.Lock()
@@ -567,8 +570,158 @@ class CrossServerRelay:
             self._handle_rate_limit_query(peer_node_id, msg)
         elif msg_type == "RATE_LIMIT_RESPONSE":
             self._handle_rate_limit_response(msg)
+        elif msg_type == "CROSS_POST_FETCH":
+            self._handle_cross_post_fetch(peer_node_id, msg)
+        elif msg_type == "CROSS_POST_FETCH_RESULT":
+            # 同步拉取的结果，交给挂起的 fetch_post 协程
+            self._deliver_rpc_response(msg.get("request_id", ""), msg)
+        elif msg_type == "SERVER_DIRECTORY_ANNOUNCE":
+            self._handle_directory_announce(peer_node_id, msg)
         elif msg_type == "PING":
             self._send_to_peer(peer_node_id, {"type": "PONG", "timestamp": int(time.time())})
+
+    # ===== 同步 RPC（用于跨服拉取帖子 / 目录公告）=====
+    def _deliver_rpc_response(self, request_id: str, msg: dict):
+        fut = self._pending_rpc.pop(request_id, None)
+        if fut is not None:
+            fut["response"] = msg
+            fut["event"].set()
+
+    def _handle_cross_post_fetch(self, peer_node_id: str, msg: dict):
+        """服→服：本服作为权威方，按 ID 返回帖子。"""
+        post_id = msg.get("post_id", "")
+        request_id = msg.get("request_id", "")
+        post = None
+        try:
+            from server.forum.posts import get_post
+            post = get_post(post_id)
+        except Exception as e:
+            print(f"[INTERSERVER] 处理 CROSS_POST_FETCH 出错: {e}")
+        self._send_to_peer(peer_node_id, {
+            "type": "CROSS_POST_FETCH_RESULT",
+            "request_id": request_id,
+            "post": post,
+            "found": bool(post),
+            "responder": self.node_id,
+        })
+
+    def _handle_directory_announce(self, peer_node_id: str, msg: dict):
+        """服→服：接收签名后的服务器目录公告，验签后缓存。"""
+        card = msg.get("card", {}) or {}
+        try:
+            from server.forum.cross_server import receive_directory_announce
+            receive_directory_announce(card)
+        except Exception as e:
+            print(f"[INTERSERVER] 处理目录公告失败: {e}")
+
+    def send_directory_announce(self, server_node_id: str, card: dict) -> bool:
+        """向指定对端服务器广播签名后的目录卡片。"""
+        return self._send_to_peer(server_node_id, {
+            "type": "SERVER_DIRECTORY_ANNOUNCE",
+            "card": card,
+            "request_id": f"dir:{self.node_id}:{int(time.time())}",
+        })
+
+    def send_to_server(self, node_id: str, msg: dict) -> bool:
+        """公共封装：向已认证对端服务器发送消息（供 group.py 等调用）。"""
+        return self._send_to_peer(node_id, msg)
+
+    def fetch_post(self, host: str, port: int, post_id: str, timeout: int = 5) -> dict | None:
+        """
+        跨服同步拉取帖子：打开临时 TCP 连接，完成 PKI 握手后发送
+        CROSS_POST_FETCH，等待 CROSS_POST_FETCH_RESULT。
+        返回 {"post": ...} 或 None。
+        """
+        import socket as _socket
+        request_id = f"fp:{self.node_id}:{post_id}:{int(time.time()*1000)}"
+        # 优先复用已认证的常驻连接
+        for pnode, pinfo in list(self.peers.items()):
+            if pinfo.get("addr") and pinfo["addr"][0] == host and pinfo["addr"][1] == port:
+                fut = {"event": threading.Event(), "response": None}
+                self._pending_rpc[request_id] = fut
+                self._send_to_peer(pnode, {
+                    "type": "CROSS_POST_FETCH",
+                    "post_id": post_id,
+                    "request_id": request_id,
+                })
+                if fut["event"].wait(timeout=timeout):
+                    return fut["response"]
+                self._pending_rpc.pop(request_id, None)
+                return None
+
+        # 无常驻连接：临时建连并握手
+        try:
+            sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            sock.connect((host, port))
+
+            my_priv = load_ed25519_private(self._ed25519_priv_b64)
+            hello_payload = json.dumps({
+                "type": "INTERSERVER_HELLO", "node_id": self.node_id,
+                "ed25519_pubkey": self._ed25519_pub_b64,
+                "ephemeral_x25519_pub": self._ephemeral_pub_b64,
+                "timestamp": int(time.time()),
+            }, sort_keys=True).encode()
+            hello_sig = sign_data(my_priv, hello_payload)
+            hello = {
+                "type": "INTERSERVER_HELLO", "node_id": self.node_id,
+                "ed25519_pubkey": self._ed25519_pub_b64,
+                "ephemeral_x25519_pub": self._ephemeral_pub_b64,
+                "timestamp": int(time.time()), "signature": hello_sig,
+            }
+            sock.sendall((json.dumps(hello) + "\n").encode())
+
+            data = sock.recv(65536)
+            resp = json.loads(data.decode().strip())
+            if resp.get("type") != "INTERSERVER_HELLO":
+                sock.close()
+                return None
+
+            peer_node_id = resp.get("node_id", "")
+            peer_e_pub = resp.get("ed25519_pubkey", "")
+            peer_ephemeral = resp.get("ephemeral_x25519_pub", "")
+            peer_ts = resp.get("timestamp", 0)
+            peer_sig = resp.get("signature", "")
+            hello_chk = json.dumps({
+                "type": "INTERSERVER_HELLO", "node_id": peer_node_id,
+                "ed25519_pubkey": peer_e_pub, "ephemeral_x25519_pub": peer_ephemeral,
+                "timestamp": peer_ts,
+            }, sort_keys=True).encode()
+            peer_pub = load_ed25519_public(peer_e_pub)
+            if not verify_signature(peer_pub, hello_chk, peer_sig):
+                sock.close()
+                return None
+            self._check_pin(peer_node_id, peer_e_pub)
+
+            auth_payload = json.dumps({
+                "type": "INTERSERVER_AUTH_OK", "node_id": self.node_id,
+                "timestamp": int(time.time()),
+            }, sort_keys=True).encode()
+            sock.sendall((json.dumps({
+                "type": "INTERSERVER_AUTH_OK", "node_id": self.node_id,
+                "timestamp": int(time.time()),
+                "signature": sign_data(my_priv, auth_payload),
+            }) + "\n").encode())
+
+            sock.sendall((json.dumps({
+                "type": "CROSS_POST_FETCH", "post_id": post_id,
+                "request_id": request_id,
+            }) + "\n").encode())
+
+            data2 = sock.recv(65536)
+            sock.close()
+            result = json.loads(data2.decode().strip())
+            if result.get("found") and result.get("post"):
+                return result
+            return None
+        except Exception as e:
+            print(f"[INTERSERVER] fetch_post {host}:{port} 失败: {e}")
+            try:
+                sock.close()
+            except Exception:
+                pass
+            return None
+
 
     def _handle_relay_message(self, peer_node_id: str, msg: dict):
         """

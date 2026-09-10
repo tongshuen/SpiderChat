@@ -23,12 +23,13 @@ def _get_user_register_time(user_uuid: str) -> int:
         if os.path.exists(users_db_path):
             conn = sqlite3.connect(users_db_path)
             conn.row_factory = sqlite3.Row
+            # users 表的注册时间列名为 registered_at（不是 created_at）
             row = conn.execute(
-                "SELECT created_at FROM users WHERE uuid=?", (user_uuid,)
+                "SELECT registered_at FROM users WHERE uuid=?", (user_uuid,)
             ).fetchone()
             conn.close()
             if row:
-                return row["created_at"]
+                return row["registered_at"]
     except Exception:
         pass
     return 0

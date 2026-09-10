@@ -72,7 +72,33 @@ class ForumClient:
                           author_pubkey=author_pubkey)
 
     def list_comments(self, post_id: str):
+        """请求帖子评论列表。服务端返回扁平列表 {"comments": [...]}，
+        每条评论含 parent_id 与 reply_to_username 字段，按热度排序。"""
         return self._send(COMMENT_LIST, post_id=post_id)
+
+    @staticmethod
+    def extract_comments(msg: dict) -> list:
+        """
+        从 COMMENT_LIST_RESULT 消息中提取扁平评论列表。
+
+        适配新 API：{"comments": [ {id, parent_id, reply_to_username, ...}, ... ]}
+        并对旧两层结构 {"roots":..., "replies":...} 做向后兼容的拍平。
+        """
+        if not isinstance(msg, dict):
+            return []
+        # 新格式：扁平列表
+        comments = msg.get("comments")
+        if isinstance(comments, list):
+            return comments
+        # 旧格式兼容：roots + replies 两层拍平
+        roots = msg.get("roots", []) or []
+        replies = msg.get("replies", {}) or {}
+        flat = []
+        for root in roots:
+            flat.append(root)
+            for reply in replies.get(root.get("id"), []):
+                flat.append(reply)
+        return flat
 
     def delete_comment(self, comment_id: str):
         return self._send(COMMENT_DELETE, id=comment_id)

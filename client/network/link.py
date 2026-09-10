@@ -462,43 +462,42 @@ class Link:
         self._locked_frequency_hz: Optional[float] = None  # 自动锁定的频点（None=尚未锁定）
         # 网关状态变更回调（供上层 GUI / 网络层订阅）
         self.on_gateway_change: Optional[Callable[[bool], None]] = None
+        # ===== 真实传输层注入点 =====
+        # 公网 / 直连发送回调由上层（TCP/WebSocket、蓝牙/WiFi 直连栈）注入。
+        # 未注入时发送会显式报错，绝不静默伪造成功（去除旧的 echo 占位）。
+        self._public_transport: Optional[Callable[[bytes], bool]] = None
+        self._direct_transport: Optional[Callable[[bytes], bool]] = None
+
+    # ---------- 传输层注入 ----------
+    def set_public_transport(self, sink: Callable[[bytes], bool]):
+        """注入公网发送回调 sink(payload: bytes) -> bool（由公网 WebSocket/中继层提供）。"""
+        self._public_transport = sink
+
+    def set_direct_transport(self, sink: Callable[[bytes], bool]):
+        """注入直连发送回调 sink(payload: bytes) -> bool（蓝牙/WiFi/局域网直连栈提供）。"""
+        self._direct_transport = sink
 
     # ---------- 自动模式：频点自动锁定 ----------
     def _auto_lock_frequency(self, bandlist_path: Optional[str] = None,
                              progress: Optional[Callable[[float], None]] = None) -> float:
         """
-        自动模式「频点锁定」逻辑（本文件核心）。
+        自动模式「频点锁定」逻辑。
 
-        流程：
-          1) 先在业余段扫描（合规优先）；
-          2) 业余段无命中 -> 按 radio.search_policy 降级：
-               'full'   扩大到全频段
-               'custom' 改扫 radio.custom_bands
-               'ham_only'(=stop) 不降级
-          3) 降级后仍无命中 -> 按 radio.fallback_action 定夺：
-               'stop'  直接用用户手填频点（退化为"手动指定"语义）
-               'auto'  无需用户确认，采用降级结果（为空则退回手填频点）
-               'ask'   通过 radio.on_fallback(...) 把决定权交给上层/GUI，
-                        上层可返回 'full'/'custom'/具体频点(float)/'stop'
+        设计约束（见本文件顶部「频率策略」）：
+            频率【始终由用户手动指定】；自动模式只协商调制参数
+            （波特率/FEC/重复码），【不协商/不切换频率】。
 
-        返回最终用于 bootstrap 的频点（Hz）。任何时候都不会返回 <=0 的值：
-        若所有扫描均无命中且未锁定，则退回 radio.frequency_hz（用户手填值）。
+        因此本函数在 auto 模式下【直接返回用户手填的 cfg.frequency_hz】，
+        不执行 scan_with_fallback 的频段扫描，也不会采用扫描命中的其它频点。
+        scan_with_fallback / scan_bands 函数本身保留（供其它诊断/重扫描用途）。
+
+        手动模式同样直接返回用户指定频点。
+
+        返回最终用于 bootstrap 的频点（Hz）。
         """
         cfg = self.radio
-        if cfg.mode != "auto":
-            # 手动模式：始终直接使用用户指定的频点
-            self._locked_frequency_hz = cfg.frequency_hz
-            return cfg.frequency_hz
-
-        outcome = scan_with_fallback(cfg, bandlist_path, callback=progress)
-
-        if outcome["results"]:
-            # 取首个命中（按信号质量排序可在此扩展；当前仿真无 SNR，取第一个）
-            chosen = float(outcome["results"][0]["frequency_hz"])
-            self._locked_frequency_hz = chosen
-            return chosen
-
-        # 未命中：退回用户手填频点（stop/ask-returned-stop 都会走到这里）
+        # 无论 auto 还是 manual，频率始终以用户手填值为准。
+        # 自动模式绝不扫描切换频率（历史 bug：曾取 results[0] 的频率）。
         self._locked_frequency_hz = cfg.frequency_hz
         return cfg.frequency_hz
 
@@ -580,15 +579,39 @@ class Link:
     def stop(self):
         self._running = False
 
-    # ---------- 各模式实现（骨架 + 直通公网的桥接占位）----------
+    # ---------- 各模式实现（委托上层注入的真实传输栈）----------
     def _send_public(self, payload: bytes) -> bool:
-        # 真实实现：走现有 Spider client.network 的公网 WebSocket / 中继
-        self._rx_queue.append(b"[public-echo]" + payload[:0])  # 占位
-        return True
+        """
+        公网发送：委托上层注入的公网传输回调（WebSocket / 中继）。
+
+        未注入传输时显式抛出 RuntimeError，不再静默 echo 假成功。
+        发送过程中的异常被捕获并返回 False（不静默失败）。
+        """
+        sink = self._public_transport
+        if sink is None:
+            raise RuntimeError(
+                "公网传输未配置：请先调用 set_public_transport() 注入真实公网连接")
+        try:
+            return bool(sink(payload))
+        except Exception as e:
+            print(f"[LINK] 公网发送失败: {e}")
+            return False
 
     def _send_direct(self, payload: bytes) -> bool:
-        # 蓝牙 / WiFi / 局域网 / 无线电 直连
-        return True
+        """
+        直连发送：委托上层注入的直连回调（蓝牙 / WiFi / 局域网 / 无线电）。
+
+        未注入传输时显式抛出 RuntimeError，不再静默假成功。
+        """
+        sink = self._direct_transport
+        if sink is None:
+            raise RuntimeError(
+                "直连传输未配置：请先调用 set_direct_transport() 注入真实直连链路")
+        try:
+            return bool(sink(payload))
+        except Exception as e:
+            print(f"[LINK] 直连发送失败: {e}")
+            return False
 
     def _send_radio_mesh(self, payload: bytes) -> bool:
         """
@@ -674,12 +697,15 @@ def selftest():
     print(f"[LINK] C 库物理层 OK: auto-negotiate={result['name']}, "
           f"loopback recv={len(received)}B")
 
-    # 5. 链路收发
+    # 5. 链路收发（注入真实公网传输回调，验证委托发送而非 echo 占位）
+    sent_frames = []
     link = Link.public()
+    link.set_public_transport(lambda p: sent_frames.append(p) is None or True)
     link.start()
     assert link.send(b"hello") is True
+    assert sent_frames == [b"hello"], "公网帧应经注入的真实传输回调发出"
     link.stop()
-    print("[LINK] Link.send/recv skeleton OK")
+    print("[LINK] Link.send/recv 委托真实传输 OK")
 
     # 6. JSON 往返
     cfg2 = RadioConfig.from_dict(cfg.to_dict())
@@ -689,6 +715,7 @@ def selftest():
     # 7. DHT bootstrap：无线电网络自动模式只需一个频点
     if link._dht is not None:
         mesh = Link(LinkMode.RADIO_MESH, radio=RadioConfig(frequency_hz=14_100_000))
+        mesh.set_public_transport(lambda p: True)  # 注入公网桥接传输
         mesh.start()
         assert mesh.send(b"register-me") is True
         assert mesh._dht_bootstrapped is True
@@ -760,14 +787,42 @@ def selftest():
     assert manual._auto_lock_frequency() == 7_100_000
     print("[LINK] auto_lock(manual) -> user freq OK")
 
-    # 15. _auto_lock_frequency：自动模式 + stop -> 业余段空则退回手填频点
+    # 15. _auto_lock_frequency：自动模式始终返回用户手填频点，
+    #     即使扫描「命中」了其它频点也绝不切换（频率只由用户指定）。
     lock_link = Link(LinkMode.RADIO_MESH, radio=stop_cfg)
     assert lock_link._auto_lock_frequency() == 14_100_000
     assert lock_link._locked_frequency_hz == 14_100_000
-    print("[LINK] auto_lock(stop) -> fallback to user freq OK")
 
-    # 16. _send_radio_mesh 自动模式：bootstrap 使用锁定频点
+    # 15b.  monkeypatch scan_with_fallback，令其「命中」一个完全不同的频点；
+    #       auto 模式下 _auto_lock_frequency 必须仍然返回用户手填频点，
+    #       且不得调用扫描（短路）。
+    import client.network.link as _link_mod
+    _orig_scan_fb = _link_mod.scan_with_fallback
+    _called = {"n": 0}
+
+    def _fake_scan_fallback(cfg, *a, **kw):
+        _called["n"] += 1
+        return {"results": [{"frequency_hz": 123_456_789.0,
+                             "signature_match": True, "scope": "ham_only"}],
+                "scope_used": "ham_only", "fallback_triggered": False, "decision": "ham"}
+
+    _link_mod.scan_with_fallback = _fake_scan_fallback
+    try:
+        auto_link = Link(LinkMode.RADIO_MESH,
+                         radio=RadioConfig(frequency_hz=14_100_000, mode="auto",
+                                           search_policy="full", fallback_action="auto"))
+        chosen_freq = auto_link._auto_lock_frequency()
+        assert chosen_freq == 14_100_000, \
+            f"auto 模式必须返回用户频点，实际返回 {chosen_freq}"
+        assert auto_link._locked_frequency_hz == 14_100_000
+        assert _called["n"] == 0, "auto 模式不应调用 scan_with_fallback"
+    finally:
+        _link_mod.scan_with_fallback = _orig_scan_fb
+    print("[LINK] auto_lock(auto) 始终返回用户频点、不扫描换频 OK")
+
+    # 16. _send_radio_mesh 自动模式：bootstrap 使用用户锁定频点
     mesh2 = Link(LinkMode.RADIO_MESH, radio=stop_cfg)
+    mesh2.set_public_transport(lambda p: True)  # 注入公网桥接传输
     mesh2.start()
     assert mesh2.send(b"auto-bootstrap") is True
     assert mesh2._dht_bootstrapped is True
