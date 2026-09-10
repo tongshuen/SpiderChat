@@ -33,6 +33,14 @@ from server.keyring_store.credentials import (
 )
 from server.keyring_store import get_keyring_service
 
+# 论坛子系统（可选，导入失败不影响核心功能）
+try:
+    from server.forum.handler import ForumHandler
+    _FORUM_AVAILABLE = True
+except Exception as _e:
+    _FORUM_AVAILABLE = False
+    _FORUM_IMPORT_ERROR = _e
+
 
 class ClientConnection:
     """表示已连接的客户端。"""
@@ -69,6 +77,14 @@ class ChatServer:
         self.admin_auth = AdminAuth(config)
         self.admin_handler = AdminCommandHandler(self, config)
         self.cross_server = None
+
+        # 论坛子系统
+        self.forum_handler = None
+        if _FORUM_AVAILABLE:
+            try:
+                self.forum_handler = ForumHandler(self)
+            except Exception as e:
+                print(f"[Forum] 初始化失败: {e}")
 
         keys = get_server_keys()
         self.server_x25519_priv = None
@@ -316,6 +332,8 @@ class ChatServer:
             self._send_raw(conn, {"type": PONG, "timestamp": int(time.time())})
         elif msg_type == PONG:
             conn.last_seen = time.time()
+        elif self.forum_handler and self.forum_handler.handle(conn, msg):
+            pass  # 论坛子系统已处理
         else:
             self._send_error(conn, f"Unknown message type: {msg_type}")
 

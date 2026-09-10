@@ -347,6 +347,8 @@ class MainWindow:
         search_entry.bind("<KeyRelease>", self._on_search_key)
         settings_btn = ctk.CTkButton(top, text="⚙ 设置", width=70, command=self._open_settings)
         settings_btn.pack(side="right", padx=5)
+        forum_btn = ctk.CTkButton(top, text="💬 论坛", width=70, command=self._open_forum)
+        forum_btn.pack(side="right", padx=5)
 
         # 主区域
         main = ctk.CTkFrame(self.root)
@@ -1561,6 +1563,14 @@ class MainWindow:
         self._admin_cmd(CMD_CREATE_USER, {"name": name})
 
     # ===== 设置窗口 =====
+    def _open_forum(self):
+        """打开论坛窗口。"""
+        try:
+            from client.gui.forum.forum_window import ForumWindow
+            ForumWindow(self.root, self.tcp, self.uuid)
+        except Exception as e:
+            messagebox.showerror("错误", f"无法打开论坛: {e}")
+
     def _open_settings(self):
         win = ctk.CTkToplevel(self.root)
         win.title("设置")

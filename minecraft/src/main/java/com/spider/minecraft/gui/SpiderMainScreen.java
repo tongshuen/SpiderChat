@@ -2,6 +2,7 @@ package com.spider.minecraft.gui;
 
 import com.spider.minecraft.SpiderMinecraftMod;
 import com.spider.minecraft.gui.tabs.*;
+import com.spider.minecraft.forum.ForumTab;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
@@ -24,8 +25,8 @@ import net.minecraft.network.chat.Component;
  */
 public class SpiderMainScreen extends Screen {
 
-    private static final int TAB_COUNT = 6;
-    private static final String[] TAB_NAMES = {"聊天", "联系人", "群组", "登录", "文件", "设置"};
+    private static final int TAB_COUNT = 7;
+    private static final String[] TAB_NAMES = {"聊天", "联系人", "群组", "登录", "文件", "论坛", "设置"};
 
     private int selectedTab = 0;
     private Button[] tabButtons;
@@ -34,6 +35,7 @@ public class SpiderMainScreen extends Screen {
     private GroupsTab groupsTab;
     private LoginTab loginTab;
     private FileTab fileTab;
+    private ForumTab forumTab;
     private SettingsTab settingsTab;
 
     // 布局参数
@@ -83,6 +85,9 @@ public class SpiderMainScreen extends Screen {
                 this.guiWidth - CONTENT_PADDING * 2, contentHeight);
         fileTab = new FileTab(this, this.guiLeft + CONTENT_PADDING, contentY,
                 this.guiWidth - CONTENT_PADDING * 2, contentHeight);
+        forumTab = new ForumTab(this);
+        forumTab.init(this.guiLeft + CONTENT_PADDING, contentY,
+                this.guiWidth - CONTENT_PADDING * 2, contentHeight);
         settingsTab = new SettingsTab(this, this.guiLeft + CONTENT_PADDING, contentY,
                 this.guiWidth - CONTENT_PADDING * 2, contentHeight);
 
@@ -101,7 +106,13 @@ public class SpiderMainScreen extends Screen {
         groupsTab.setVisible(index == 2);
         loginTab.setVisible(index == 3);
         fileTab.setVisible(index == 4);
-        settingsTab.setVisible(index == 5);
+        settingsTab.setVisible(index == 6);
+
+        // 论坛标签页组件动态添加/移除
+        if (index == 5) {
+            for (Button b : forumTab.getButtons()) this.addRenderableWidget(b);
+            for (net.minecraft.client.gui.components.EditBox e : forumTab.getEditBoxes()) this.addRenderableWidget(e);
+        }
 
         // 选中时刷新数据
         if (index == 0) chatTab.refresh();
@@ -137,7 +148,8 @@ public class SpiderMainScreen extends Screen {
             case 2 -> groupsTab.render(graphics, mouseX, mouseY, partialTick);
             case 3 -> loginTab.render(graphics, mouseX, mouseY, partialTick);
             case 4 -> fileTab.render(graphics, mouseX, mouseY, partialTick);
-            case 5 -> settingsTab.render(graphics, mouseX, mouseY, partialTick);
+            case 5 -> forumTab.render(graphics, mouseX, mouseY, partialTick);
+            case 6 -> settingsTab.render(graphics, mouseX, mouseY, partialTick);
         }
 
         super.render(graphics, mouseX, mouseY, partialTick);
@@ -177,6 +189,10 @@ public class SpiderMainScreen extends Screen {
         return SpiderMinecraftMod.get();
     }
 
+    public net.minecraft.client.gui.Font getFontRenderer() {
+        return this.font;
+    }
+
     public void sendClientMessage(String text) {
         if (this.minecraft != null && this.minecraft.player != null) {
             this.minecraft.player.displayClientMessage(Component.literal(text), false);
@@ -186,6 +202,29 @@ public class SpiderMainScreen extends Screen {
     public void switchToTab(int tabIndex) {
         if (tabIndex >= 0 && tabIndex < TAB_COUNT) {
             selectTab(tabIndex);
+        }
+    }
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (selectedTab == 5 && forumTab.mouseClicked(mouseX, mouseY, button)) {
+            return true;
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (selectedTab == 5) {
+            forumTab.tick();
+        }
+    }
+
+    /** 处理论坛相关消息（由网络层调用） */
+    public void handleForumMessage(com.google.gson.JsonObject msg) {
+        if (forumTab != null) {
+            forumTab.handleMessage(msg);
         }
     }
 }

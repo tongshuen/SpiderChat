@@ -14,6 +14,7 @@ import com.spider.android.model.Contact
 import com.spider.android.model.Message
 import com.spider.android.ui.login.LoginActivity
 import com.spider.android.ui.settings.SettingsActivity
+import com.spider.android.forum.ForumFragment
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -29,6 +30,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var bottomNav: BottomNavigationView
     private var chatFragment: ChatFragment? = null
     private var contactsFragment: ContactsFragment? = null
+    private var forumFragment: ForumFragment? = null
 
     var currentContact: Contact? = null
         private set
@@ -46,6 +48,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 R.id.nav_contacts -> {
                     showFragment(getContactsFragment())
+                    true
+                }
+                R.id.nav_forum -> {
+                    showFragment(getForumFragment())
                     true
                 }
                 R.id.nav_settings -> {
@@ -75,6 +81,13 @@ class MainActivity : AppCompatActivity() {
             contactsFragment = ContactsFragment()
         }
         return contactsFragment!!
+    }
+
+    private fun getForumFragment(): ForumFragment {
+        if (forumFragment == null) {
+            forumFragment = ForumFragment()
+        }
+        return forumFragment!!
     }
 
     private fun showFragment(fragment: Fragment) {
@@ -238,6 +251,19 @@ class MainActivity : AppCompatActivity() {
 
         app.spiderClient.onPing = { timestamp ->
             Log.d(TAG, "Server PING at $timestamp, PONG sent automatically")
+        }
+
+        // 论坛消息路由
+        app.spiderClient.onMessage = { msg ->
+            runOnUiThread {
+                val type = msg.optString("type", "")
+                if (type.startsWith("POST_") || type.startsWith("COMMENT_") || type.startsWith("VOTE_") ||
+                    type.startsWith("SERVER_") || type.startsWith("LOAD_") || type.startsWith("NOTIFICATION_") ||
+                    type.startsWith("REPORT_") || type.startsWith("DRAFT_") || type.startsWith("FORUM_PROFILE_") ||
+                    type.startsWith("CROSS_")) {
+                    forumFragment?.handleForumMessage(msg)
+                }
+            }
         }
 
         app.spiderClient.onDisconnect = {

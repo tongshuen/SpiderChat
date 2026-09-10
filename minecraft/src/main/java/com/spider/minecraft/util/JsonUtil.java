@@ -50,4 +50,16 @@ public final class JsonUtil {
     public static String fromUtf8(byte[] data) {
         return new String(data, StandardCharsets.UTF_8);
     }
+
+    /** 安全获取 JsonObject 中的字符串值 */
+    public static String getString(JsonObject obj, String key, String def) {
+        if (obj == null || !obj.has(key) || obj.get(key).isJsonNull()) return def;
+        return obj.get(key).getAsString();
+    }
+
+    /** 安全获取 JsonObject 中的整数值 */
+    public static int getInt(JsonObject obj, String key, int def) {
+        if (obj == null || !obj.has(key) || obj.get(key).isJsonNull()) return def;
+        try { return obj.get(key).getAsInt(); } catch (Exception e) { return def; }
+    }
 }
