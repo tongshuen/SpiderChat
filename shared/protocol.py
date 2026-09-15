@@ -313,4 +313,22 @@ CMD_RELOAD_CONFIG = "RELOAD_CONFIG"
 CMD_SET_SERVER_NAME = "SET_SERVER_NAME"
 CMD_SET_MAX_CONNECTIONS = "SET_MAX_CONNECTIONS"
 CMD_SET_MIN_CLIENT_VERSION = "SET_MIN_CLIENT_VERSION"
+# 以下为本轮补全的管理员命令常量（仅新增，不改动已有常量）
+CMD_USER_INFO = "USER_INFO"
+CMD_LIST_BANNED = "LIST_BANNED"
+CMD_UNMUTE_USER = "UNMUTE_USER"
+CMD_STATS = "STATS"
+
+
+# ===== 带外签名（Out-of-Band Signature，仅追加）=====
+# 签名串单行格式：
+#   spider-sig:v1;uuid=xxx;timestamp=秒;data_hash=sha256hex;sig=base64
+# 与 Android 端互通；私钥永远不上传，签名全部本地计算。
+OUTBAND_SIG_PREFIX = "spider-sig:v1"
+OUTBAND_MODE_OWNERSHIP = "ownership"   # 账号所有权证明（输入外部随机挑战 nonce）
+OUTBAND_MODE_CONTENT = "content"       # 消息内容签名（输入任意文本）
+OUTBAND_PREFIX_OWNERSHIP = b"spider-outband-ownership\n"
+OUTBAND_PREFIX_CONTENT = b"spider-outband-content\n"
+# 时间戳合理性窗口（仅作警告，不拒绝）
+OUTBAND_CLOCK_SKEW_WARN_SEC = 300
 

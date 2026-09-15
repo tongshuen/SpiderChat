@@ -90,13 +90,18 @@ class MessageVault:
         return bool(self._get_meta("salt_b64"))
 
     def initialize(self, pin: str):
-        """首次启用：生成盐值并派生主密钥。"""
+        """首次启用：生成盐值并派生主密钥，同时创建自测探针。"""
         if not _HAS_CRYPTO:
             raise RuntimeError("cryptography 库未安装，无法启用保险库")
         salt = os.urandom(SALT_SIZE)
         self._set_meta("salt_b64", base64.b64encode(salt).decode())
         self._derive_master(pin, salt)
         self.unlocked = True
+        # 创建自测探针（用正确的 PIN 密钥加密）
+        self._current_msg_id = "probe"
+        ct_b64, nonce_b64 = self._raw_encrypt("spider-vault-probe", "probe")
+        self._set_meta("probe_ct", ct_b64)
+        self._set_meta("probe_nonce", nonce_b64)
 
     def unlock(self, pin: str) -> bool:
         """用 PIN 派生主密钥并尝试自测解密验证。"""
@@ -138,11 +143,9 @@ class MessageVault:
         probe = self._get_meta("probe_ct")
         probe_nonce = self._get_meta("probe_nonce")
         if not probe or not probe_nonce:
-            # 首次 unlock：生成一个自测样本
-            ct_b64, nonce_b64 = self._raw_encrypt("spider-vault-probe", "probe")
-            self._set_meta("probe_ct", ct_b64)
-            self._set_meta("probe_nonce", nonce_b64)
-            return True
+            # 没有探针（旧版本或损坏）：无法验证，返回 False 拒绝解锁
+            return False
+        self._current_msg_id = "probe"
         pt = self._raw_decrypt(probe, probe_nonce)
         return pt == "spider-vault-probe"
 

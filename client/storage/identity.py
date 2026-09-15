@@ -131,7 +131,13 @@ def save_identity_file(identity: dict, pin: str, duress_pin: str = ""):
             to_save[key_name] = identity[key_name]
 
 
-    aad = b"spider-identity-encryption"
+    # AAD 绑定版本号与 UUID（防跨身份/跨版本密文替换攻击）
+    import json as _json
+    aad = _json.dumps({
+        "ctx": "spider-identity",
+        "ver": 2,
+        "uuid": identity.get("uuid", ""),
+    }, sort_keys=True).encode("utf-8")
     for key_name in ["x25519_private", "ed25519_private"]:
         if key_name in identity:
             raw = base64.b64decode(identity[key_name])

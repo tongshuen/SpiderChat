@@ -16,6 +16,7 @@ import threading
 import time
 import hashlib
 import struct
+import os
 from collections import OrderedDict
 from .routing import RoutingTable
 from .rpc import DHTRPC
@@ -46,8 +47,6 @@ class DHTNode:
         self.hidden_mode = hidden
         self.whitelist = set(whitelist or [])
 
-        self.rpc = DHTRPC(self)
-
         k = config.get("dht", {}).get("k_bucket_size", 20)
         alpha = config.get("dht", {}).get("alpha", 3)
         self.routing_table = RoutingTable(node_id, k=k, alpha=alpha)
@@ -63,9 +62,11 @@ class DHTNode:
         self._store: dict[str, dict] = {}
         self._store_lock = threading.Lock()
 
-
         self._seen_messages: OrderedDict = OrderedDict()
         self._seen_lock = threading.Lock()
+
+        # 必须在 _seen_lock 就绪后再创建 DHTRPC（其 __init__ 复用该锁）
+        self.rpc = DHTRPC(self)
 
         self._node_info: dict = {}
         self._node_lock = threading.Lock()
@@ -205,7 +206,7 @@ class DHTNode:
         elif msg_type == "FIND_NODE_RESPONSE":
             self._handle_find_node_response(msg)
         elif msg_type == DHT_STORE:
-            self._handle_store(msg)
+            self._handle_store(msg, addr)
         elif msg_type == "STORE_ACK":
             self._handle_store_ack(msg)
         elif msg_type == DHT_GET:
@@ -288,7 +289,7 @@ class DHTNode:
         if target_id:
             self.rpc._notify_find_node_result(target_id, nodes)
 
-    def _handle_store(self, msg: dict):
+    def _handle_store(self, msg: dict, addr):
         if self.hidden_mode and msg.get("sender_id") not in self.whitelist:
             return
         key = msg.get("key", "")
@@ -309,6 +310,8 @@ class DHTNode:
             "key": key,
             "timestamp": int(time.time()),
         }
+        signed = self._sign_message(response)
+        self._send_to(addr, signed)
 
     def _handle_store_ack(self, msg: dict):
         """处理 STORE_ACK：记录确认并将发送者加入路由表。"""

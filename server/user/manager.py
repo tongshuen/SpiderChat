@@ -234,6 +234,27 @@ class UserManager:
         conn.close()
         return bool(row and row[0] > time.time())
 
+    def unmute_user(self, uuid_str: str) -> bool:
+        """解除用户禁言（muted_until 清零）。"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("UPDATE users SET muted_until=0 WHERE uuid=?", (uuid_str,))
+        affected = c.rowcount
+        conn.commit()
+        conn.close()
+        return affected > 0
+
+    def list_banned_users(self) -> list:
+        """列出所有被封禁的用户。"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            "SELECT uuid, name, last_ip, last_seen FROM users WHERE is_banned=1 ORDER BY registered_at DESC"
+        )
+        rows = c.fetchall()
+        conn.close()
+        return [{"uuid": r[0], "name": r[1], "ip": r[2], "last_seen": r[3]} for r in rows]
+
 
     def mark_compromised(self, uuid_str: str):
         conn = sqlite3.connect(self.db_path)

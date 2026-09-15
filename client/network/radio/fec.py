@@ -119,7 +119,8 @@ def hamming_decode(data: bytes) -> bytes:
     if num_codewords == 0:
         return b""
     bits = bits[:num_codewords * 7]
-    out = bytearray(num_codewords // 2)
+    # (num_codewords + 1) // 2 处理奇数码字个数（截断帧/损坏帧边界情况）
+    out = bytearray((num_codewords + 1) // 2)
     for cw_idx in range(0, num_codewords, 2):
         cw1 = list(bits[cw_idx * 7:(cw_idx + 1) * 7])
         if cw_idx + 1 < num_codewords:

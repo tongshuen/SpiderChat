@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/spider_background">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- 标题 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="带外签名工具"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/spider_primary"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="使用 Ed25519 在本地对挑战或文本进行签名，私钥不会离开本机。签名串可粘贴到其他端进行核验。"
+            android:textSize="12sp"
+            android:textColor="@color/spider_on_surface"
+            android:layout_marginBottom="16dp" />
+
+        <!-- 模式选择 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="签名模式"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="@color/white"
+            android:layout_marginBottom="4dp" />
+
+        <RadioGroup
+            android:id="@+id/rgMode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginBottom="8dp">
+
+            <RadioButton
+                android:id="@+id/rbOwnership"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="账号所有权证明（挑战 nonce）"
+                android:textColor="@color/white"
+                android:checked="true" />
+
+            <RadioButton
+                android:id="@+id/rbContent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="消息内容签名（自定义文本）"
+                android:textColor="@color/white" />
+        </RadioGroup>
+
+        <!-- 待签名文本 -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="待签名文本 / 挑战 nonce"
+            android:layout_marginBottom="8dp">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etInputText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textMultiLine"
+                android:minLines="2"
+                android:textColor="@color/white" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <Button
+            android:id="@+id/btnSign"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="生成签名"
+            android:backgroundTint="@color/spider_primary"
+            android:textColor="@color/white"
+            android:layout_marginBottom="8dp" />
+
+        <!-- 签名结果 -->
+        <TextView
+            android:id="@+id/tvSignResult"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:textColor="@color/spider_success"
+            android:fontFamily="monospace"
+            android:textIsSelectable="true"
+            android:layout_marginBottom="4dp"
+            android:text="（尚未生成签名）" />
+
+        <Button
+            android:id="@+id/btnCopySign"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="复制签名"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:textColor="@color/spider_primary"
+            android:layout_marginBottom="16dp"
+            android:layout_gravity="end" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/spider_surface"
+            android:layout_marginBottom="16dp" />
+
+        <!-- 校验区域 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="签名核验"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/spider_primary"
+            android:layout_marginBottom="8dp" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="待核验的签名串"
+            android:layout_marginBottom="8dp">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etVerifySig"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textMultiLine"
+                android:minLines="3"
+                android:fontFamily="monospace"
+                android:textColor="@color/white" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="原文（与签名时的文本完全一致）"
+            android:layout_marginBottom="8dp">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etVerifyOriginal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textMultiLine"
+                android:minLines="2"
+                android:textColor="@color/white" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <Button
+            android:id="@+id/btnVerify"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="核验"
+            android:backgroundTint="@color/spider_primary"
+            android:textColor="@color/white"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/tvVerifyResult"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="13sp"
+            android:textColor="@color/white"
+            android:layout_marginBottom="24dp"
+            android:text="（尚未核验）" />
+
+    </LinearLayout>
+</ScrollView>

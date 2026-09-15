@@ -2,6 +2,7 @@ package com.spider.android.ui.settings
 
 import android.Manifest
 import android.app.AlertDialog
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Button
@@ -14,6 +15,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.spider.android.R
 import com.spider.android.SpiderApp
+import com.spider.android.ui.sign.OutbandSignActivity
 
 /**
  * 设置界面 — 死人开关、胁迫 PIN、通用设置。
@@ -53,6 +55,9 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var swAutoDownload: Switch
     private lateinit var swReadReceipts: Switch
 
+    // 工具
+    private lateinit var btnOutbandSign: Button
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
@@ -73,6 +78,7 @@ class SettingsActivity : AppCompatActivity() {
         tvDuressStatus = findViewById(R.id.tvDuressStatus)
         swAutoDownload = findViewById(R.id.swAutoDownload)
         swReadReceipts = findViewById(R.id.swReadReceipts)
+        btnOutbandSign = findViewById(R.id.btnOutbandSign)
     }
 
     private fun loadSettings() {
@@ -122,6 +128,10 @@ class SettingsActivity : AppCompatActivity() {
         swReadReceipts.setOnCheckedChangeListener { _, isChecked ->
             getSharedPreferences("spider_settings", MODE_PRIVATE)
                 .edit().putBoolean("read_receipts", isChecked).apply()
+        }
+
+        btnOutbandSign.setOnClickListener {
+            startActivity(Intent(this, OutbandSignActivity::class.java))
         }
     }
 

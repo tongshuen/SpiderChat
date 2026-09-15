@@ -96,11 +96,11 @@ class RoutingTable:
         for bucket in self.buckets:
             all_nodes.extend(bucket.get_all())
 
-        def xor_dist_str(a: str, b: str) -> int:
-            return int(a, 16) ^ int(b, 16)
+        def _to_int(x):
+            return int(x, 16) if isinstance(x, str) else x
 
-        t = int(target_id, 16)
-        sorted_nodes = sorted(all_nodes, key=lambda n: xor_dist_str(n["node_id"], t))
+        t = _to_int(target_id)
+        sorted_nodes = sorted(all_nodes, key=lambda n: _to_int(n["node_id"]) ^ t)
         return sorted_nodes[:count]
 
     def all_nodes(self) -> list:

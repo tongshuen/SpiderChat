@@ -19,9 +19,10 @@ from shared.crypto_utils import (
     ecdh_shared_secret, hkdf_derive,
     aesgcm_encrypt, aesgcm_decrypt,
     sign_data, verify_signature,
-    secure_token,
+    secure_token, b64_encode,
     NONCE_SIZE,
 )
+from cryptography.hazmat.primitives import serialization
 
 
 def current_timestamp() -> int:
@@ -54,11 +55,18 @@ def encrypt_message(
     if ephemeral_priv_b64 and peer_ephemeral_pub_b64:
         shared = ecdh_shared_secret(ephemeral_priv_b64, peer_ephemeral_pub_b64)
         context = b"spider-msg-ephemeral-v1"
+        # 推导发送方临时公钥，随消息发送给接收方用于 ECDH
+        _eph_priv_obj = load_x25519_private(ephemeral_priv_b64)
+        ephemeral_pub_for_msg = b64_encode(_eph_priv_obj.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        ))
     else:
         my_priv = load_x25519_private(my_x_priv_b64)
         peer_pub = load_x25519_public(peer_x_pub_b64)
         shared = my_priv.exchange(peer_pub)
         context = b"spider-msg-identity-v1"
+        ephemeral_pub_for_msg = ""
 
     aes_key = hkdf_derive(shared, info=context, length=32)
 
@@ -88,7 +96,7 @@ def encrypt_message(
         "tag": enc_result["tag"],
         "aad": enc_result["aad"],
         "signature": signature,
-        "ephemeral_pub": ephemeral_priv_b64,  # 如果可用，由调用方设置
+        "ephemeral_pub": ephemeral_pub_for_msg,  # 发送方临时公钥（接收方用于 ECDH）
         "fs_used": bool(ephemeral_priv_b64 and peer_ephemeral_pub_b64),
     }
 

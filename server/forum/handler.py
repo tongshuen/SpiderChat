@@ -237,7 +237,7 @@ class ForumHandler:
         # 跨服寻址
         post, source, error = cross_server_mod.resolve_post(
             post_id, self.node_id,
-            dht_store=getattr(self.chat_server, "store", None),
+            dht_store=getattr(self.chat_server, "dht_node", None),
             cross_server_conn=getattr(self.chat_server, "cross_server", None),
         )
         if error:

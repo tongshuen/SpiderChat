@@ -28,7 +28,7 @@ from client.crypto.keys import (
     set_default_avatar,
 )
 from client.experimental.manager import is_experimental_enabled, is_feature_enabled
-from client.api.server import bridge as api_bridge
+from client.api.server import bridge as api_bridge, set_identity_provider
 from client.crypto.encrypt import encrypt_message, decrypt_message, encrypt_file_data, decrypt_file_data
 from client.crypto.exchange import get_session_key, clear_all_sessions
 from client.utils.uuidgen import generate_uuid_v1
@@ -196,6 +196,8 @@ class MainWindow:
 
     def _register_api_callbacks(self):
         """注册 HTTP API 桥接回调，让 API 服务器可以操控客户端。"""
+        # 注入已解锁身份提供者，供带外签名端点本地读取私钥（不上传）
+        set_identity_provider(lambda: self.identity)
         api_bridge.register("get_profile", self._api_get_profile)
         api_bridge.register("update_profile", self._api_update_profile)
         api_bridge.register("get_settings", self._api_get_settings)
@@ -1757,7 +1759,14 @@ class MainWindow:
 
     def _open_experimental_dialog(self):
         from client.gui.experimental_dialog import ExperimentalDialog
-        ExperimentalDialog(self.root, on_features_changed=self._on_experimental_changed)
+        ExperimentalDialog(self.root,
+                           on_features_changed=self._on_experimental_changed,
+                           on_open_outband_sign=self._open_outband_sign_tool)
+
+    def _open_outband_sign_tool(self):
+        """打开带外签名工具窗口（使用已解锁身份）。"""
+        from client.gui.outband_sign_window import OutbandSignWindow
+        OutbandSignWindow(self.root, self.identity)
 
     def _on_experimental_changed(self):
         # 实验性功能变化时刷新设置窗口（如果打开着）

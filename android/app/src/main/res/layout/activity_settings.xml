@@ -198,5 +198,30 @@
                 android:layout_height="wrap_content" />
         </LinearLayout>
 
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/spider_surface"
+            android:layout_marginBottom="16dp" />
+
+        <!-- 工具 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="工具"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/spider_primary"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnOutbandSign"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="带外签名工具"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:textColor="@color/spider_primary"
+            android:layout_marginBottom="16dp" />
+
     </LinearLayout>
 </ScrollView>

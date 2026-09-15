@@ -31,6 +31,10 @@ class AdminCommandHandler:
                 users = self.user_mgr.list_all_users()
                 return {"count": len(users), "users": users}
 
+            elif command == CMD_LIST_BANNED:
+                users = self.user_mgr.list_banned_users()
+                return {"count": len(users), "users": users}
+
             elif command == CMD_BAN_USER:
                 uuid_str = params.get("uuid", "")
                 reason = params.get("reason", "")
@@ -138,6 +142,11 @@ class AdminCommandHandler:
                 self.user_mgr.mute_user(uuid_str, duration)
                 return {"ok": True, "muted_until": time.time() + duration}
 
+            elif command == CMD_UNMUTE_USER:
+                uuid_str = params.get("uuid", "")
+                ok = self.user_mgr.unmute_user(uuid_str)
+                return {"ok": ok, "uuid": uuid_str}
+
             elif command == CMD_SET_MAX_FILE_SIZE:
                 mb = int(params.get("mb", 100))
                 self.config.setdefault("file_transfer", {})["max_file_size_mb"] = mb
@@ -223,6 +232,16 @@ class AdminCommandHandler:
                 ver = params.get("version", "1.0.0")
                 self.config.setdefault("user_management", {})["min_client_version"] = ver
                 return {"ok": True, "version": ver}
+
+            elif command == CMD_RESET_TOFU:
+                cross = getattr(self.server, "cross_server", None)
+                if cross is None:
+                    return {"ok": False, "reason": "跨服中继未启动"}
+                cross.reset_tofu_pins()
+                return {"ok": True}
+
+            elif command == CMD_STATS:
+                return {"ok": True, "stats": self.server.get_stats()}
 
             else:
                 return {"ok": False, "reason": f"Unknown command: {command}"}

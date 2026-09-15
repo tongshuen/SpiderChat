@@ -36,6 +36,7 @@ ALL_PERMISSIONS = [
     "groups:write",        # 管理群聊
     "files:send",          # 发送文件
     "files:download",      # 下载文件
+    "sign:outband",        # 带外签名（本地 Ed25519 签名/校验，私钥不上传）
 ]
 
 PERMISSION_WARNING_THRESHOLD = 1.5  # 15项权限

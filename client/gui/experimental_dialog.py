@@ -23,9 +23,10 @@ CONFIRM_TEXT = "打开实验性功能"
 
 
 class ExperimentalDialog:
-    def __init__(self, parent, on_features_changed=None):
+    def __init__(self, parent, on_features_changed=None, on_open_outband_sign=None):
         self.parent = parent
         self.on_features_changed = on_features_changed
+        self.on_open_outband_sign = on_open_outband_sign
         self.win = ctk.CTkToplevel(parent)
         self.win.title("实验性功能")
         self.win.geometry("520x600")
@@ -161,7 +162,21 @@ class ExperimentalDialog:
                      text_color="gray", font=("Arial", 9)).pack(pady=(10, 2))
         ctk.CTkButton(self.win, text="关闭实验性功能", width=150, fg_color="red",
                        command=self._disable_all).pack(pady=5)
+
+        # ===== 带外签名工具入口（需实验性功能已开启）=====
+        if self.on_open_outband_sign is not None:
+            ctk.CTkButton(self.win, text="✍ 带外签名工具", width=180,
+                          command=self._open_outband_sign).pack(pady=(5, 5))
+
         ctk.CTkButton(self.win, text="关闭", width=80, command=self.win.destroy).pack(pady=5)
+
+    def _open_outband_sign(self):
+        # 入口按钮仅在实验性功能开启后显示；此处再做一次防御性检查
+        if not is_experimental_enabled():
+            self._show_toast("请先开启实验性功能")
+            return
+        if self.on_open_outband_sign is not None:
+            self.on_open_outband_sign()
 
     def _toggle_feature(self, feature_id, var):
         if var.get():

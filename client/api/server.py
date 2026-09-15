@@ -49,6 +49,29 @@ class AppBridge:
 bridge = AppBridge()
 
 
+# ===== 当前已解锁身份提供者（带外签名用）=====
+# 主窗口启动时通过 set_identity_provider() 注入一个可调用对象，
+# 返回已解锁身份字典（含 ed25519_private / ed25519_public / uuid）。
+# 私钥只在本地内存中使用，绝不上传服务器。
+_current_identity_provider = None
+
+
+def set_identity_provider(fn):
+    """设置当前已解锁身份提供者（可调用，返回身份字典或 None）。"""
+    global _current_identity_provider
+    _current_identity_provider = fn
+
+
+def _get_current_identity():
+    """获取当前已解锁身份字典；未解锁返回 None。"""
+    if _current_identity_provider is None:
+        return None
+    try:
+        return _current_identity_provider()
+    except Exception:
+        return None
+
+
 class APIHandler(BaseHTTPRequestHandler):
     """HTTP API 请求处理器。"""
 
@@ -139,6 +162,45 @@ class APIHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
+
+        # ===== 带外签名（本地纯计算，不走 bridge）=====
+        if path in ("/api/sign/outband", "/api/sign/verify"):
+            entry, err = self._authenticate("sign:outband")
+            if err:
+                self._send_json(err[0], err[1])
+                return
+            body = self._require_body()
+            if body is None:
+                return
+            identity = _get_current_identity()
+            if not identity or not identity.get("ed25519_private"):
+                self._send_json(503, {"success": False, "data": None,
+                                      "error": "身份未解锁，无法进行本地签名"})
+                return
+            try:
+                from client.crypto.outband_sign import sign_outband, verify_outband
+                if path == "/api/sign/outband":
+                    text = body.get("text", "")
+                    mode = body.get("mode", "content")
+                    signature_string = sign_outband(
+                        text=text,
+                        mode=mode,
+                        ed25519_priv_b64=identity["ed25519_private"],
+                        uuid=identity["uuid"],
+                    )
+                    self._send_json(200, {"success": True,
+                                          "data": {"signature": signature_string},
+                                          "error": ""})
+                else:  # /api/sign/verify
+                    signature = body.get("signature", "")
+                    original_text = body.get("original_text", "")
+                    # 默认用本端公钥校验；允许 body 传入签名者公钥以校验他人签名
+                    pub_b64 = body.get("public_key") or identity.get("ed25519_public", "")
+                    result = verify_outband(signature, original_text, pub_b64)
+                    self._send_json(200, {"success": True, "data": result, "error": ""})
+            except Exception as e:
+                self._send_json(500, {"success": False, "data": None, "error": str(e)})
+            return
 
         routes = {
             "/api/messages/send": ("messages:send", "send_message"),

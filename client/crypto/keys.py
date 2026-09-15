@@ -391,12 +391,6 @@ def set_default_avatar() -> tuple[bool, str]:
     return True, "默认头像已设置"
 
 
-def get_avatar_b64() -> str:
-    """获取当前头像 base64，如果未设置则返回默认头像。"""
-    profile = load_user_profile()
-    return profile.get("avatar_b64", DEFAULT_AVATAR_B64)
-
-
 def has_custom_avatar() -> bool:
     """检查用户是否设置了自定义头像（非默认）。"""
     profile = load_user_profile()

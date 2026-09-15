@@ -22,9 +22,7 @@ def get_session_key(my_uuid: str, peer_uuid: str,
     if pair in _session_keys:
         return _session_keys[pair]
 
-    my_priv = load_x25519_private(my_x_priv_b64)
-    peer_pub = load_x25519_public(peer_x_pub_b64)
-    shared = ecdh_shared_secret(my_priv, peer_pub)
+    shared = ecdh_shared_secret(my_x_priv_b64, peer_x_pub_b64)
 
     salt_input = ("|".join(pair)).encode()
     salt = hashlib.sha256(salt_input).digest()
