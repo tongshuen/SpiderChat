@@ -129,7 +129,7 @@ public class MessageStore {
      */
     public List<StoredMessage> searchMessages(String userUuid, String keyword) {
         List<StoredMessage> result = new ArrayList<>();
-        // 注意：消息是加密的，搜索需要解密后匹配。此处仅返回所有消息供上层过滤。
+        // 消息是加密的，搜索需要解密后匹配。此处仅返回所有消息供上层过滤。
         try (Connection conn = dbManager.getConnection();
              PreparedStatement stmt = conn.prepareStatement(
                  "SELECT msg_id, from_uuid, to_uuid, encrypted_envelope, is_file, " +

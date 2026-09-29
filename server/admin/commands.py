@@ -240,6 +240,60 @@ class AdminCommandHandler:
                 cross.reset_tofu_pins()
                 return {"ok": True}
 
+            elif command == CMD_SET_DECOY:
+                cross = getattr(self.server, "cross_server", None)
+                if cross is None:
+                    return {"ok": False, "reason": "跨服中继未启动"}
+                raw_enabled = params.get("enabled", False)
+                if isinstance(raw_enabled, str):
+                    enabled = raw_enabled.strip().lower() in ("1", "true", "yes", "on")
+                else:
+                    enabled = bool(raw_enabled)
+                try:
+                    min_sec = float(params.get("min_interval", self.config.get("decoy_min_interval_sec", 30)))
+                    max_sec = float(params.get("max_interval", self.config.get("decoy_max_interval_sec", 180)))
+                except (TypeError, ValueError):
+                    return {"ok": False, "reason": "interval 必须为数字"}
+                if min_sec <= 0 or max_sec <= 0 or min_sec >= max_sec:
+                    return {"ok": False, "reason": "interval 需满足 0 < min < max"}
+                cross.set_decoy(enabled, min_sec, max_sec)
+                self.config["decoy_enabled"] = enabled
+                self.config["decoy_min_interval_sec"] = min_sec
+                self.config["decoy_max_interval_sec"] = max_sec
+                return {"ok": True, "decoy_enabled": enabled, "min_interval": min_sec, "max_interval": max_sec}
+
+            elif command == CMD_DECOY_ON:
+                cross = getattr(self.server, "cross_server", None)
+                if cross is None:
+                    return {"ok": False, "reason": "跨服中继未启动"}
+                try:
+                    lo = float(params.get("interval_min", self.config.get("decoy_min_interval_sec", 30)))
+                    hi = float(params.get("interval_max", self.config.get("decoy_max_interval_sec", 300)))
+                except (TypeError, ValueError):
+                    return {"ok": False, "reason": "interval 必须为数字"}
+                if not cross.set_decoy(True, lo, hi):
+                    return {"ok": False, "reason": "interval 需满足 0 < min < max"}
+                self.config["decoy_enabled"] = True
+                self.config["decoy_min_interval_sec"] = lo
+                self.config["decoy_max_interval_sec"] = hi
+                return {"ok": True, "message": "随机数据包已开启", "status": cross.decoy_status()}
+
+            elif command == CMD_DECOY_OFF:
+                cross = getattr(self.server, "cross_server", None)
+                if cross is None:
+                    return {"ok": False, "reason": "跨服中继未启动"}
+                lo = float(self.config.get("decoy_min_interval_sec", 30))
+                hi = float(self.config.get("decoy_max_interval_sec", 300))
+                cross.set_decoy(False, lo, hi)
+                self.config["decoy_enabled"] = False
+                return {"ok": True, "message": "随机数据包已关闭", "status": cross.decoy_status()}
+
+            elif command == CMD_DECOY_STATUS:
+                cross = getattr(self.server, "cross_server", None)
+                if cross is None:
+                    return {"ok": False, "reason": "跨服中继未启动"}
+                return {"ok": True, "status": cross.decoy_status()}
+
             elif command == CMD_STATS:
                 return {"ok": True, "stats": self.server.get_stats()}
 

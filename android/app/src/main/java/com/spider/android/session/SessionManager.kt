@@ -208,6 +208,6 @@ class SessionManager(
         }
         // 擦除本地数据
         keyManager.wipe()
-        // 注意：数据库擦除由调用方处理（UI 层）
+        // 数据库擦除由调用方处理（UI 层）
     }
 }

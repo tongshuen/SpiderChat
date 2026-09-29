@@ -643,7 +643,7 @@ class Link:
                 pass
         return self._send_public(payload)  # 桥接到公网，实现互通
 
-    # ---------- 便捷构造 ----------
+    # ---------- 构造方法 ----------
     @classmethod
     def public(cls, url: str = "wss://spider.example.com") -> "Link":
         return cls(LinkMode.PUBLIC, public_url=url)

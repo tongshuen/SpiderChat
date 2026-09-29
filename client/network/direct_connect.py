@@ -1373,7 +1373,7 @@ def selftest():
     assert mgr._has_public_access is True
     assert mgr._has_radio_access is False
     assert mgr.has_network_access() is True
-    # 注意：can_act_as_gateway 只要求有网络接入且愿意中继，不要求双条件
+    # can_act_as_gateway 只要求有网络接入且愿意中继，不要求双条件
     # 双条件是无线电网络网关（dht.GatewayManager）的规则
     assert mgr.can_act_as_gateway() is True
     print("[DC] set_network_capabilities (public only) OK")
@@ -1502,7 +1502,7 @@ def selftest():
         "timestamp": int(time.time()),
     }
     # 本节点不是网关，但 next_hop=gw_peer 是直连邻居，应转发
-    # 注意：_handle_network_relay 中如果本节点不是网关且 next_hop 不是自己，
+    # _handle_network_relay 中如果本节点不是网关且 next_hop 不是自己，
     # 会尝试转发到 next_hop
     mgr._handle_network_relay("mid_peer", relay_msg2)
     print("[DC] _handle_network_relay (multi-hop forward) OK")

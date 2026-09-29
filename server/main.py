@@ -218,6 +218,8 @@ def main():
     cross_server = CrossServerRelay(config, dht_node=dht_node)
     cross_server.start(listen_port=interserver_port)
     logger.info(f"跨服务器中继已启动，TCP 端口: {interserver_port}")
+    if config.get("decoy_enabled"):
+        logger.info(f"随机数据包已启用，发送间隔 {config.get('decoy_min_interval_sec', 30)}~{config.get('decoy_max_interval_sec', 180)} 秒")
 
     # 8. 聊天服务端
     tcp_port = config.get("tcp_port", DEFAULT_TCP_PORT)

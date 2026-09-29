@@ -217,7 +217,7 @@ def deinterleave(data: bytes, depth: int = 32) -> bytes:
 
 
 # ============================================================
-# 便捷 API（带帧头，编码/解码严格对称）
+# 帧头封装 API（编码/解码严格对称）
 # ============================================================
 
 def fec_encode(payload: bytes, repeat: int = 1, interleave_depth: int = 1) -> bytes:

@@ -28,7 +28,7 @@ import java.util.Arrays;
  *   <li>定期（默认每小时）轮换密钥：生成新临时密钥对，ECDH 派生新密钥</li>
  * </ol>
  *
- * <p>即使攻击者抓取了网络流量并 later 获取了长期密钥，也无法破译历史通信。
+ * <p>即使攻击者抓取了网络流量并事后获取了长期密钥，也无法破译历史通信。
  */
 public class TransportEncryptor {
 

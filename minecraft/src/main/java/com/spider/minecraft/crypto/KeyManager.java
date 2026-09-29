@@ -324,7 +324,7 @@ public class KeyManager {
 
     /**
      * 设置胁迫 PIN。需要先解锁。
-     * 注意：此方法不校验与解锁 PIN 的关系（因为不知道解锁 PIN 明文），
+     * 此方法不校验与解锁 PIN 的关系（因为不知道解锁 PIN 明文），
      * 调用方应先使用 validateDuressAgainstUnlock() 校验。
      */
     public void setDuressPin(String duressPin) {

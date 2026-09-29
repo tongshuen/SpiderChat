@@ -321,6 +321,16 @@ Spider 支持可选的多跳洋葱路由：
 - **目的**: 隐藏通信双方的真实 IP 地址
 - **节点**: 通过 DHT 网络发现中继节点
 
+### 6.4 跨服中继流量伪造（诱饵包）
+
+针对洋葱网络上的端到端时序分析攻击，Spider 服务端可选地在跨服中继链路上注入与真实中继包不可区分的随机诱饵包，使观察者无法仅凭包到达时间与包形状识别真实聊天流量。
+
+- **外层信封同构**：诱饵包使用与真实跨服中继完全相同的 `RELAY_MSG` 类型，外层 `from_uuid`/`to_uuid`/`signature`/`source_server`/`timestamp` 与内层 `encrypted_payload` 字典的键集逐字段对齐；UUID、Ed25519 签名位、临时公钥位均取等长随机串，消除长度与字段集侧信道。
+- **内容层密封**：诱饵正文（含 `dummy` 标记、随机 nonce、随机长度载荷、时间戳）使用该对端 interserver 握手派生的 transport_key（X25519 ECDH → HKDF-SHA256，info=`spider-interserver-transport`）做 AES-256-GCM 密封；`dummy` 标记仅存在于 GCM 明文内部。AAD 采用与真实消息同形的 `{from,to,ts,proto}` 排序 JSON，并带域分隔标签 `spider-random-packet-v1`，避免 AAD 字节长度指纹。
+- **发送侧**：每轮在 `[decoy_min_interval_sec, decoy_max_interval_sec]`（默认 30~300 秒）上均匀随机等待，随后从已认证对端集合中等概率随机选取一台发送，而非广播。
+- **接收侧**：对端对入站 `RELAY_MSG` 先用本地持有的 transport_key 尝试 GCM 解密。真实中继内容由客户端端到端密封、不经 transport_key，GCM 认证必然失败而走正常中继路径；解密成功且内含 `dummy` 标记即判定为诱饵，计数后静默丢弃——不落库、不转发、不回执、不打日志。
+- **不可区分性**：在没有 interserver transport_key 的观察者看来，诱饵包与真实中继包具有相同的类型、字段结构、密文外形、随机 nonce/载荷以及随机化的时间与对端分布，无法区分真实聊天包与噪声包。
+
 ---
 
 ## 7. 胁迫 PIN 与数据擦除

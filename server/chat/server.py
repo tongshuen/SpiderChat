@@ -1015,7 +1015,7 @@ class ChatServer:
     def _trigger_deadman(self, entry: dict):
         """
         触发死人开关：先把警告消息推送给预定收件人，再执行胁迫密码的同款操作。
-        这样哪怕客户端炸了，警告消息也能按时发送。
+        警告消息存储在服务器端，客户端不可用时仍按到期时间推送。
         """
         uuid_str = entry["uuid"]
         recipient_uuid = entry["recipient_uuid"]

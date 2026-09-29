@@ -130,6 +130,10 @@ DEFAULT_CONFIG = {
         "max_layers": MAX_ONION_LAYERS,
     },
 
+    "decoy_enabled": False,            # 随机数据包总开关，默认关闭
+    "decoy_min_interval_sec": 30,      # 诱饵包发送间隔下限（秒）
+    "decoy_max_interval_sec": 300,     # 诱饵包发送间隔上限（秒）
+
     "direct_connect": {
         "enabled": True,
         "max_peers": 50,

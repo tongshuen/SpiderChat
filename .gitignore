@@ -10,3 +10,4 @@ data/*.db
 data/*.db-journal
 data/*.lock
 *.log
+test_report.txt

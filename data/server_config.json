@@ -81,6 +81,10 @@
     "max_layers": 5
   },
 
+  "decoy_enabled": false,
+  "decoy_min_interval_sec": 30,
+  "decoy_max_interval_sec": 300,
+
   "direct_connect": {
     "enabled": true,
     "max_peers": 50,

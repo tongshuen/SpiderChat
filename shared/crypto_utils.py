@@ -123,7 +123,7 @@ def ecdh_shared_secret(priv_b64: str, peer_pub_b64: str) -> bytes:
 
 
 def generate_ephemeral_keypair() -> Tuple[str, str]:
-    """生成全新的临时 X25519 密钥对以实现前向保密。"""
+    """生成临时 X25519 密钥对以实现前向保密。"""
     return generate_x25519_keypair()
 
 def ephemeral_session_key(

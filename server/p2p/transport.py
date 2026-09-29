@@ -218,7 +218,7 @@ class SecureTransport:
                 return False
 
     def send_json(self, msg: dict) -> bool:
-        """便捷方法：发送 JSON 可序列化字典。"""
+        """发送 JSON 可序列化字典。"""
         return self.send(json.dumps(msg).encode("utf-8"))
 
 
@@ -253,7 +253,7 @@ class SecureTransport:
             return plaintext
 
     def recv_json(self) -> Optional[dict]:
-        """便捷方法：接收并解析 JSON。"""
+        """接收并解析 JSON。"""
         data = self.recv()
         if data is None:
             return None

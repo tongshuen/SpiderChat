@@ -6,7 +6,7 @@
 
 ## 项目简介
 
-Spider 是一个专注于安全与隐私的端到端加密通信系统，支持**互联网、局域网、P2P 直连、业余无线电（SDR）**以及 **Minecraft 游戏内**等多种通信渠道。它采用去中心化架构，结合去中心化服务器中继与点对点直连两种模式，为用户提供灵活、可靠且高度安全的通信体验。
+Spider 是一个专注于安全与隐私的端到端加密通信系统，支持**互联网、局域网、P2P 直连、业余无线电（SDR）**以及 **Minecraft 游戏内**等多种通信渠道。它采用去中心化架构，结合去中心化服务器中继与点对点直连两种模式。
 
 Spider 的核心理念是"安全默认，隐私至上"。所有消息、文件传输、群聊内容均经过 **AES-256-GCM** 加密，身份验证采用 **Ed25519** 签名，密钥交换使用 **X25519** 椭圆曲线 Diffie-Hellman，并支持临时密钥（Ephemeral）以实现前向保密（PFS）。此外，Spider 集成了传输层包混淆（HTTP/DNS/TLS/WebSocket 伪装）、可选洋葱路由（多跳匿名中继）、胁迫 PIN 以及无线电链路 FEC 纠错等高级安全功能。
 
@@ -68,7 +68,7 @@ Spider 由以下部分组成，共享同一套加密协议与工具库：
 ### 8. 安全增强特性
 
 - **胁迫 PIN（Duress PIN）**：当用户被胁迫时，输入胁迫 PIN 会触发本地数据自动销毁并通知服务器标记账户为已泄露。
-- **死人开关（Dead Man's Switch）**：用户长期未登录时，服务器自动将预设警告消息发送给指定收件人，再执行胁迫操作。警告消息在登录、编辑时自动同步到服务器，哪怕客户端损坏也能按时发送。
+- **死人开关（Dead Man's Switch）**：用户长期未登录时，服务器自动将预设警告消息发送给指定收件人，再执行胁迫操作。警告消息在登录、编辑时自动同步到服务器，送达服务器后即按到期时间推送，不依赖客户端在线。
 - **重放攻击防护**：服务端和 DHT 节点均缓存近期 nonce，拒绝重复消息。
 - **包混淆**：将加密流量伪装成 HTTP、DNS、TLS 或 WebSocket 流量，规避深度包检测。
 - **洋葱路由**：可选多跳中继，隐藏通信双方真实 IP 地址。
@@ -109,6 +109,16 @@ Spider 由以下部分组成，共享同一套加密协议与工具库：
 - **搜索与个人资料**：按名称搜索本服帖子（FTS5 全文搜索），按 ID 跨服寻址，按标签搜索服务器目录。个人资料页聚合多服数据（发帖数、评论数、获赞数），支持举报、屏蔽、草稿箱。
 - **四端支持**：Python 客户端（独立论坛窗口）、Minecraft 模组（论坛标签页）、Android 客户端（论坛 Fragment）、服务端（完整论坛 API）。
 - 详细设计见 [FORUM_DESIGN.md](FORUM_DESIGN.md)。
+
+### 13. 随机数据包（时序分析对抗）
+
+- 用途：对抗洋葱网络的时序分析攻击。服务端管理员可选择启用本服务器的随机数据包（诱饵包）功能；启用后，服务器在每轮随机等待一个时间间隔后，从已认证的跨服对端集合中随机选取一台 peer 发送一个诱饵包，而非向所有对端广播。
+- **外层信封与真实跨服中继 `RELAY_MSG` 逐字段同构**：诱饵包直接使用 `type=RELAY_MSG`，外层字段（`from_uuid` / `to_uuid` / `signature` / `source_server` / `timestamp`）以及内层 `encrypted_payload` 字典的键集（`version` / `from_uuid` / `to_uuid` / `timestamp` / `nonce` / `ciphertext` / `tag` / `aad` / `signature` / `ephemeral_pub` / `fs_used`）与真实中继消息完全对齐；`from_uuid`/`to_uuid`/`signature`/`ephemeral_pub` 取等长随机值以消除长度侧信道。
+- **内容层用对端 transport_key 做 AES-256-GCM 密封**：诱饵正文（含 `dummy: true` 标记、随机 nonce、随机长度载荷、时间戳）使用该对端握手派生的 interserver transport_key 密封；`dummy` 标记只存在于 GCM 密文内部，无密钥者无法读取。AAD 采用与真实消息同形的 `{from,to,ts,proto}` 结构（域分隔标签 `spider-random-packet-v1`），避免 AAD 字节长度指纹。
+- **接收方静默丢弃**：对端收到 `RELAY_MSG` 后，先用本端持有的 transport_key 尝试 GCM 解密内容层；真实中继内容是客户端端到端密封、不经 transport_key，GCM 认证必然失败，从而走正常中继流程。若解密成功且内含 `dummy` 标记，即判定为诱饵，计数后直接返回——不落库、不转发、不投递、不触发限速、不产生回执，且不打印日志，避免日志侧信道。
+- **配置**：`server_config.json` 中的 `decoy_enabled`（bool，默认 `false`）、`decoy_min_interval_sec`（默认 30）与 `decoy_max_interval_sec`（默认 300），需满足 `0 < min < max`。
+- **管理员命令**：运行时通过 `DECOY_ON`（可选 `interval_min` / `interval_max`）开启、`DECOY_OFF` 关闭、`DECOY_STATUS` 查看状态（含已发送/已接收计数、当前间隔、已认证对端数）。
+- 安全模型：在没有 interserver transport_key 的观察者看来，诱饵包与真实跨服中继包在类型、字段结构、密文外形、发送时间分布与对端选择上均不可区分，无法通过时序或包形状特征识别真实聊天流量。
 
 ## 系统架构
 
@@ -163,7 +173,7 @@ Spider 由以下部分组成，共享同一套加密协议与工具库：
 
 ### 4. Minecraft 模组（`minecraft/`）
 
-在 Minecraft 中使用完整功能的 Spider！为 Minecraft 26.2 + NeoForge 设计的模组。
+在 Minecraft 中使用完整功能的 Spider。为 Minecraft 26.2 + NeoForge 设计的模组。
 
 **客户端特性：**
 - 游戏内 GUI — 右上角 Spider 按钮一键打开图形界面（聊天/联系人/群组/登录/文件/设置六标签页）
@@ -249,6 +259,7 @@ cd minecraft
 
 - **客户端配置**：`~/.local/share/spider/settings.json`（Linux）或对应平台数据目录下的 `settings.json`。可调整颜色、自动下载、已读回执开关、默认搜索范围、无线电链路配置等。
 - **服务端配置**：`data/server_config.json`，包括所有端口、限速、文件、DHT、日志、安全等参数。
+- **随机数据包（诱饵包）配置**（`data/server_config.json`，均为可选）：`decoy_enabled`（bool，默认 `false`）控制是否启用随机数据包功能；`decoy_min_interval_sec`（默认 30）与 `decoy_max_interval_sec`（默认 300）分别为向已认证跨服 peer 随机发送诱饵包的时间间隔下限与上限（秒），需满足 `0 < min < max`。
 - **引导节点**：`data/guide.txt`，每行一个 `host:port`，用于 DHT 引导。
 - **Minecraft 客户端配置**：`config/spiderminecraft-client.toml`（HUD 按钮、自动下载、已读回执等）。
 - **Minecraft 服务端配置**：`config/spiderminecraft-common.toml`（端口、加密、广播等）。
@@ -273,6 +284,9 @@ cd minecraft
 | `RELOAD_CONFIG` | 重载配置 |
 | `STATS` | 查看服务器统计 |
 | `RESET_TOFU` | 重置 TOFU 引脚（清除所有跨服务器信任记录） |
+| `DECOY_ON [interval_min] [interval_max]` | 开启随机数据包（诱饵包）：可选发送间隔下限/上限（秒，需满足 0 < min < max，缺省取配置值 30/300） |
+| `DECOY_OFF` | 关闭随机数据包（诱饵包） |
+| `DECOY_STATUS` | 查看随机数据包状态（开关、当前间隔、已发送/已接收计数、已认证对端数） |
 
 详细命令列表请参考 `server/admin/commands.py` 中的 `ADMIN_COMMANDS`。Minecraft 服务端管理员命令详见 `minecraft/README.md`。
 

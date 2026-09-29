@@ -92,7 +92,7 @@ def create_api_key(name: str, permissions: list, expiry_hours: float = -1):
 
     Returns:
         dict: {key, key_hash, mask, name, permissions, expiry, created_at}
-        注意：完整 key 只在此返回，之后无法再获取
+        完整 key 只在此返回，之后无法再获取
     """
     # 校验权限
     invalid = [p for p in permissions if p not in ALL_PERMISSIONS]

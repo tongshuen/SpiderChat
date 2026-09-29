@@ -15,7 +15,7 @@ import com.spider.android.network.SpiderClient
  * - 在登录、编辑警告消息、编辑收件人时同步到服务器
  * - 服务器将其作为特殊离线消息存储，到期用户未登录时先推送警告再执行胁迫操作
  *
- * 这样哪怕客户端炸了，警告消息也能按时发送。
+ * 警告消息由服务器到期推送，与客户端是否在线无关。
  */
 class DeadmanManager(
     private val context: Context,
@@ -112,7 +112,7 @@ class DeadmanManager(
         val gracePeriodSec = cfg.graceDays * 86400
 
         // 自动附加当前位置信息（元数据格式，不在消息中显示，长按/悬停可见）
-        // 这样哪怕客户端炸了，警告消息也能携带最后已知位置
+        // 警告消息送达服务器后即携带最后已知位置，不依赖客户端后续在线
         val messageWithLocation = buildString {
             append(cfg.warningMessage)
             if (locationHelper.hasPermission()) {

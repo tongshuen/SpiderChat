@@ -332,3 +332,12 @@ OUTBAND_PREFIX_CONTENT = b"spider-outband-content\n"
 # 时间戳合理性窗口（仅作警告，不拒绝）
 OUTBAND_CLOCK_SKEW_WARN_SEC = 300
 
+
+# ===== 随机数据包（诱饵包）=====
+# 跨服诱饵消息类型：与真实跨服消息走同一加密通道，用于对抗时序分析。
+DECOY_MSG = "DECOY_MSG"
+# 管理员命令：开关本服务器随机数据包功能。
+CMD_SET_DECOY = "SET_DECOY"
+CMD_DECOY_ON = "DECOY_ON"
+CMD_DECOY_OFF = "DECOY_OFF"
+CMD_DECOY_STATUS = "DECOY_STATUS"

@@ -47,7 +47,7 @@ class DuressManager(
         val identity = keyManager.getIdentity()
         if (uuid.isNotEmpty() && identity != null && spiderClient.isConnected) {
             val signData = "compromised|$uuid|${System.currentTimeMillis() / 1000}"
-            // 注意：这里需要 cryptoManager，但为了避免循环依赖，通过 sessionManager 触发
+            // 这里需要 cryptoManager，但为避免循环依赖，通过 sessionManager 触发
             sessionManager.triggerDuress()
         }
 

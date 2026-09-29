@@ -15,11 +15,14 @@ SECURITY:
 
 import json
 import time
+import random
+import secrets
 import threading
 import hashlib
 import socket
 import sqlite3
 import os
+import uuid
 from collections import defaultdict
 from server.config.loader import get_data_dir
 from shared.crypto_utils import (
@@ -28,10 +31,16 @@ from shared.crypto_utils import (
     hkdf_derive, generate_x25519_keypair,
     load_x25519_private, load_x25519_public,
     b64_encode, b64_decode,
+    aesgcm_encrypt,
 )
+from shared.protocol import DECOY_MSG
 from server.keyring_store.credentials import (
     get_server_keys, get_node_id
 )
+
+# 诱饵内容层的域分隔 AAD：与端到端消息加密区分，使用握手派生的 interserver
+# transport_key 密封。接收方以此识别 dummy，无密钥者不可区分。
+_DECOY_AAD = b"spider-random-packet-v1"
 
 
 class CrossServerRelay:
@@ -89,6 +98,17 @@ class CrossServerRelay:
 
         self._listener_thread = None
         self._running = False
+
+        # 随机数据包（诱饵包）状态
+        self._decoy_enabled = False
+        self._decoy_thread = None
+        self._decoy_stop_event = threading.Event()
+        self._decoy_lock = threading.Lock()
+        self._decoy_min = 30.0
+        self._decoy_max = 180.0
+        self._decoy_sent = 0
+        self._decoy_received = 0
+        self._decoy_last_sent = 0.0
 
 
     def _init_db(self):
@@ -198,7 +218,15 @@ class CrossServerRelay:
                             args=(peer["node_id"], peer["host"], peer["port"]),
                             daemon=True).start()
 
+        if self.config.get("decoy_enabled"):
+            self.set_decoy(True,
+                           float(self.config.get("decoy_min_interval_sec", 30)),
+                           float(self.config.get("decoy_max_interval_sec", 180)))
+
     def stop(self):
+        self._decoy_stop_event.set()
+        if self._decoy_thread and self._decoy_thread.is_alive():
+            self._decoy_thread.join(timeout=2)
         self._running = False
         if hasattr(self, '_sock') and self._sock:
             try:
@@ -212,6 +240,153 @@ class CrossServerRelay:
                 except:
                     pass
             self.peers.clear()
+
+    # ===== 随机数据包（诱饵包）=====
+    def set_decoy(self, enabled: bool, min_sec: float, max_sec: float) -> bool:
+        """
+        开关本服务器的随机数据包功能。
+        校验 0 < min_sec < max_sec，非法时返回 False 且不改变现有状态。
+        """
+        if not (0 < min_sec < max_sec):
+            return False
+        with self._decoy_lock:
+            self._decoy_enabled = bool(enabled)
+            self._decoy_min = float(min_sec)
+            self._decoy_max = float(max_sec)
+        if enabled:
+            if not (self._decoy_thread and self._decoy_thread.is_alive()):
+                self._decoy_stop_event.clear()
+                self._decoy_thread = threading.Thread(target=self._decoy_loop, daemon=True)
+                self._decoy_thread.start()
+        else:
+            self._decoy_stop_event.set()
+        return True
+
+    def _build_decoy_message(self, peer_node_id: str) -> dict | None:
+        """
+        构造与真实 RELAY_MSG 逐字段同构的诱饵包：同一 type 与全部信封字段，
+        from_uuid/to_uuid/signature 取等长随机值以消除长度侧信道。
+        encrypted_payload 的键集与取值特征对齐 client.crypto.encrypt_message 的密封
+        字典（version/from_uuid/to_uuid/timestamp/nonce/ciphertext/tag/aad/signature/
+        ephemeral_pub/fs_used），dummy 标记只存在于 transport_key 密封的 GCM 明文内。
+        """
+        with self.peers_lock:
+            peer = self.peers.get(peer_node_id)
+            transport_key = peer.get("transport_key") if peer else None
+        if not transport_key:
+            return None
+
+        inner = json.dumps({
+            "dummy": True,
+            "nonce": secrets.token_hex(16),
+            "payload": secrets.token_hex(random.randint(16, 1024)),
+            "ts": int(time.time()),
+        }).encode()
+
+        # AAD 与真实消息同形（from/to/ts/proto 的 JSON），避免 AAD 字节长度指纹。
+        aad_dict = {
+            "from": str(uuid.uuid4()),
+            "to": str(uuid.uuid4()),
+            "ts": int(time.time()),
+            "proto": "spider/2.0",
+        }
+        aad = json.dumps(aad_dict, sort_keys=True).encode("utf-8")
+        sealed = aesgcm_encrypt(transport_key, inner, aad=aad)
+
+        return {
+            "type": "RELAY_MSG",
+            # 外层 from/to 与内层 encrypted_payload（及 AAD）取值一致，与真实消息相同
+            "from_uuid": aad_dict["from"],
+            "to_uuid": aad_dict["to"],
+            "encrypted_payload": {
+                "version": 2,
+                "from_uuid": aad_dict["from"],
+                "to_uuid": aad_dict["to"],
+                "timestamp": aad_dict["ts"],
+                "nonce": sealed["nonce"],
+                "ciphertext": sealed["ciphertext"],
+                "tag": sealed["tag"],
+                "aad": sealed["aad"],
+                "signature": b64_encode(os.urandom(64)),
+                "ephemeral_pub": b64_encode(os.urandom(32)),
+                "fs_used": True,
+            },
+            "signature": b64_encode(os.urandom(64)),
+            "source_server": self.node_id,
+            "timestamp": int(time.time()),
+        }
+
+    def _decoy_loop(self):
+        """每隔随机间隔从已认证对端集合随机选一台发送；集合为空则跳过本轮。"""
+        while True:
+            with self._decoy_lock:
+                lo, hi = self._decoy_min, self._decoy_max
+            if self._decoy_stop_event.wait(timeout=random.uniform(lo, hi)):
+                break
+            with self.peers_lock:
+                targets = [nid for nid, p in self.peers.items() if p.get("authenticated")]
+            if not targets:
+                continue
+            target = random.choice(targets)
+            envelope = self._build_decoy_message(target)
+            if envelope and self._send_to_peer(target, envelope):
+                with self._decoy_lock:
+                    self._decoy_sent += 1
+                    self._decoy_last_sent = time.time()
+
+    def decoy_status(self) -> dict:
+        """返回诱饵包运行状态（供管理员 STATUS 命令与统计）。"""
+        with self._decoy_lock:
+            status = {
+                "enabled": self._decoy_enabled,
+                "interval_min": self._decoy_min,
+                "interval_max": self._decoy_max,
+                "last_sent_time": self._decoy_last_sent,
+                "sent_count": self._decoy_sent,
+                "received_count": self._decoy_received,
+            }
+        with self.peers_lock:
+            status["known_peers"] = sum(
+                1 for p in self.peers.values() if p.get("authenticated"))
+        return status
+
+    @staticmethod
+    def _decrypt_with_transport_key(transport_key: bytes, sealed: dict) -> bytes | None:
+        """静默 GCM 解密：失败返回 None，不打印日志，避免对真实中继造成日志侧信道。"""
+        try:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            nonce = b64_decode(sealed.get("nonce", ""))
+            ciphertext = b64_decode(sealed.get("ciphertext", ""))
+            tag = b64_decode(sealed.get("tag", ""))
+            aad = b64_decode(sealed.get("aad", "")) if sealed.get("aad") else _DECOY_AAD
+            return AESGCM(transport_key).decrypt(nonce, ciphertext + tag, aad)
+        except Exception:
+            return None
+
+    def _is_decoy_relay(self, peer_node_id: str, msg: dict) -> bool:
+        """
+        识别诱饵包：用本端持有的对端 transport_key 尝试解密内容层。真实中继内容是
+        客户端端到端密封、不经 transport_key，GCM 认证必然失败；解密成功且带 dummy
+        标记即判定为诱饵，计数后由调用方静默丢弃。
+        """
+        with self.peers_lock:
+            peer = self.peers.get(peer_node_id)
+            transport_key = peer.get("transport_key") if peer else None
+        if not transport_key:
+            return False
+        plaintext = self._decrypt_with_transport_key(
+            transport_key, msg.get("encrypted_payload") or {})
+        if not plaintext:
+            return False
+        try:
+            inner = json.loads(plaintext.decode())
+        except Exception:
+            return False
+        if not inner.get("dummy"):
+            return False
+        with self._decoy_lock:
+            self._decoy_received += 1
+        return True
 
 
     def add_known_peer(self, node_id: str, host: str, port: int,
@@ -570,6 +745,10 @@ class CrossServerRelay:
             self._handle_rate_limit_query(peer_node_id, msg)
         elif msg_type == "RATE_LIMIT_RESPONSE":
             self._handle_rate_limit_response(msg)
+        elif msg_type == DECOY_MSG:
+            # 诱饵包：静默丢弃，不投递、不记录正文、不产生回执。
+            with self._decoy_lock:
+                self._decoy_received += 1
         elif msg_type == "CROSS_POST_FETCH":
             self._handle_cross_post_fetch(peer_node_id, msg)
         elif msg_type == "CROSS_POST_FETCH_RESULT":
@@ -725,9 +904,13 @@ class CrossServerRelay:
 
     def _handle_relay_message(self, peer_node_id: str, msg: dict):
         """
-        对端服务器请求我们向本地用户投递消息。
+        将消息投递给本地用户。
         采用本地和对端报告的限速中更严格的一方。
         """
+        # 诱饵包识别命中即静默丢弃：不入库、不投递、不触发限速与业务、不回执。
+        if self._is_decoy_relay(peer_node_id, msg):
+            return
+
         target_uuid = msg.get("to_uuid", "")
         from_uuid = msg.get("from_uuid", "")
         encrypted = msg.get("encrypted_payload", {})
@@ -781,7 +964,7 @@ class CrossServerRelay:
         gm.handle_remote_group_message(msg)
 
     def _handle_user_lookup(self, peer_node_id: str, msg: dict):
-        """对端询问我们是否有某用户。找到则返回公钥。"""
+        """回应对端查询：本地是否存在某用户。找到则返回公钥。"""
         target_uuid = msg.get("uuid", "")
         user = self.chat_server.user_manager.get_user(target_uuid) if self.chat_server else None
         response = {
@@ -805,7 +988,7 @@ class CrossServerRelay:
                 self.remote_user_cache[uuid_str] = msg.get("responder", "")
 
     def _handle_rate_limit_query(self, peer_node_id: str, msg: dict):
-        """对端询问我们对某用户的限速设置。"""
+        """回应对端关于某用户限速设置的查询。"""
         uuid_str = msg.get("uuid", "")
         if not self.chat_server:
             return
@@ -1056,6 +1239,13 @@ class CrossServerRelay:
             cache_size = len(self.remote_user_cache)
         with self._rate_cache_lock:
             rate_peers = len(self._peer_rate_cache)
+        with self._decoy_lock:
+            decoy_sent = self._decoy_sent
+            decoy_received = self._decoy_received
+            decoy_enabled = self._decoy_enabled
+            decoy_min = self._decoy_min
+            decoy_max = self._decoy_max
+            decoy_last_sent = self._decoy_last_sent
         return {
             "connected_peers": len(self.peers),
             "known_peers": len(self.known_peers),
@@ -1064,6 +1254,12 @@ class CrossServerRelay:
             "peers": peer_list,
             "rate_aware_peers": rate_peers,
             "auth_method": "PKI-Ed25519-TOFU",
+            "decoy_sent": decoy_sent,
+            "decoy_received": decoy_received,
+            "decoy_enabled": decoy_enabled,
+            "decoy_interval_min": decoy_min,
+            "decoy_interval_max": decoy_max,
+            "decoy_last_sent": decoy_last_sent,
         }
 
     def reset_tofu_pins(self):
